@@ -173,7 +173,7 @@ def _split_top_level_pipes(s: str) -> list[str]:
 
 # ------------------------ Weighted file helpers -----------------------------
 
-_WEIGHT_RE = re.compile(r'(?<!\\)%([0-9]*\.?[0-9]+)')
+_WEIGHT_RE = re.compile(r'(?<!\\)%([0-9]*\.?[0-9]+)(?=\s*$)')
 
 def _extract_choice_weight(choice: str) -> tuple[str, float]:
     """
