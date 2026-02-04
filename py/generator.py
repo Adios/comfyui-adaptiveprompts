@@ -21,7 +21,7 @@ BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 # - name may include letters/digits/_/-/* and '/'
 # - optional ^var after the name (var may include trailing *)
 # - also supports pure variable recall: __^var__
-FILE_PATTERN = re.compile(r"__(?:([a-zA-Z0-9_\-/*]+?))?(?:\^([a-zA-Z0-9_\-\*]+))?__")
+FILE_PATTERN = re.compile(r"__(?:([a-zA-Z0-9_\-/ *]+?))?(?:\^([a-zA-Z0-9_\-\*]+))?__")
 
 # Normalize spacing between adjacent wildcard-ish tokens (allow ^ and *)
 ADJ_WC_PATTERN = re.compile(r"(__[a-zA-Z0-9_\-/*\^\*]+__)(__[a-zA-Z0-9_\-/*\^\*]+__)")
