@@ -2,6 +2,7 @@ import os
 import re
 from typing import Dict, List, Tuple, Optional
 from .generator import SeededRandom
+from .wildcard_utils import build_category_options, _default_package_root
 
 class WildcardPreprocessor:
     """
@@ -174,6 +175,10 @@ class PromptRepack:
             "- flexible (default): lower-case + spaces→underscores."
         )
 
+        labels, mapping, tooltip = build_category_options()
+        cls._CATEGORY_LABELS = labels
+        cls._CATEGORY_MAP = mapping
+
         return {
             "required": {
                 "string": ("STRING", {"multiline": True, "default": ""}),
@@ -184,6 +189,7 @@ class PromptRepack:
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "blacklist_file": (blacklist_files, {"default": "blacklist.txt"}),
                 "refresh_cache": ("BOOLEAN", {"default": False, "tooltip": "Reload wildcards and blacklist caches."}),
+                "category": (labels, {"default": labels[0] if labels else "Default", "tooltip": tooltip}),
             }
         }
 
@@ -207,6 +213,9 @@ class PromptRepack:
         # cache of indices keyed by (matching_mode, index_brackets)
         # value shape: { "word": {key -> [groups]}, "phrase": {key -> [groups]} }
         self._indices_cache: Dict[Tuple[str, bool], Dict[str, Dict[str, List[str]]]] = {}
+
+        # track active folder for category changes
+        self.active_folder = "wildcards"
 
     # ------------------- blacklist helpers -------------------
 
@@ -563,10 +572,28 @@ class PromptRepack:
 
     def repack(self, string: str, detection_mode: str, matching_mode: str,
                index_brackets: bool, chance: float, seed: int,
-               blacklist_file: str, refresh_cache: bool = False):
+               blacklist_file: str, refresh_cache: bool = False, category=None):
 
-        # Refresh wildcards and indices if asked
-        if refresh_cache:
+        # Resolve category label -> folder path
+        category_label = category if category is not None else (
+            getattr(self.__class__, "_CATEGORY_LABELS", ["wildcards"])[0]
+        )
+        folder_map = getattr(self.__class__, "_CATEGORY_MAP", {}) or {}
+        folder_entry = folder_map.get(category_label, "wildcards")
+
+        if os.path.isabs(folder_entry) and os.path.isdir(folder_entry):
+            wildcard_dir = folder_entry
+        else:
+            wildcard_dir = os.path.join(_default_package_root(), folder_entry)
+
+        default_wildcards = os.path.join(_default_package_root(), "wildcards")
+        if not os.path.isdir(wildcard_dir):
+            wildcard_dir = default_wildcards
+
+        # Refresh wildcards and indices if asked or folder changed
+        if refresh_cache or self.active_folder != wildcard_dir:
+            self.active_folder = wildcard_dir
+            self.preprocessor = WildcardPreprocessor(wildcard_dir)
             self.preprocessor.preprocess()
             self._indices_cache.clear()
             self._last_blacklist_file = None
