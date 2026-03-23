@@ -15,7 +15,7 @@ from typing import List, Tuple
 from .wildcard_utils import build_category_options, _default_package_root
 
 # Regex to recognize __file__ and optional ^var (we ignore ^var in sequencing)
-FILE_PATTERN = re.compile(r"__(?:([a-zA-Z0-9_\-/*]+?))?(?:\^([a-zA-Z0-9_\-\*]+))?__")
+FILE_PATTERN = re.compile(r"__(?:([a-zA-Z0-9_\-/ *]+?))?(?:\^([a-zA-Z0-9_\-\*]+))?__")
 
 # Reused helper: split top-level pipes inside braces (preserve exact segments)
 def _split_top_level_pipes(s: str) -> List[str]:
