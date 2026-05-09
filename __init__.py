@@ -1,4 +1,5 @@
 import os
+from .py.prompt_stack_loader import PromptStackLoader
 from .py.prompt_repack import PromptRepack
 from .py.prompt_replace import PromptReplace
 from .py.prompt_generator import PromptGenerator, PromptGeneratorAdvanced, PromptContextMerge, PromptSequencer
@@ -35,7 +36,7 @@ NODE_CLASS_MAPPINGS = {
     "SaveImageAndText": SaveImageAndText,
     "RandomFloats": RandomFloats4,
     "RandomIntegers": RandomIntegers4,
-    
+    "PromptStackLoader": PromptStackLoader,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -61,6 +62,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "SaveImageAndText": "Save Image And Text",
     "RandomFloats": "Random Floats 4",
     "RandomIntegers": "Random Integers 4",
+    "PromptStackLoader": "🥞 Prompt Stack Loader 🥞",
 }
 
 def register_nodes(comfy):
