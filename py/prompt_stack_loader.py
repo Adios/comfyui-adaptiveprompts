@@ -1,8 +1,9 @@
 import os
 import re
+import glob
 from typing import List
-from .generator import resolve_wildcards, SeededRandom, DEFAULT_WILDCARD_ROOT
-from .wildcard_utils import _normalize_input_context, _ensure_bucket_dict
+from .generator import SeededRandom, DEFAULT_WILDCARD_ROOT, evaluate_prompt_core
+from .wildcard_utils import _normalize_input_context, _ensure_bucket_dict, _snapshot_context, _apply_context_override
 
 DEFAULT_PROMPT_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "prompts")
@@ -10,8 +11,15 @@ DEFAULT_PROMPT_ROOT = os.path.abspath(
 
 class PromptStackLoader:
     """
-    Sequentially loads, parses, and evaluates a stack of text files,
-    stripping LoRA tags, evaluating prompts, and accumulating an Adaptive Prompts context.
+    Sequentially loads, parses, and evaluates a stack of text files to build a complex prompt and context.
+    
+    This node acts as a batch processor that orchestrates prompt generation across multiple files:
+    1. It resolves file paths, processes inline commands (remove:, replace:, random:), and collects a final list of files.
+    2. For each file, it extracts and isolates LoRA tags (`<lora:...>`) directly from the raw string.
+    3. It delegates the remaining text to the core evaluation logic to cleanly handle wildcards, 
+       comment blocks (`##...##`), and formatting.
+    4. Variables defined in one file (context) are accumulated and sequentially merged (or overridden) 
+       into the next, allowing complex cross-file prompt building.
     """
     
     @classmethod
@@ -59,7 +67,7 @@ class PromptStackLoader:
     def _resolve_paths(self, base_dir: str, stack_file: str, inline_stack: str) -> List[str]:
         paths = []
         if stack_file:
-            # We use the variable 'stack_path' instead of the old 'config_path'
+            # Use the variable 'stack_path' for stack configuration files
             stack_path = stack_file
             if not os.path.isabs(stack_path) and base_dir:
                 stack_path = os.path.normpath(os.path.join(base_dir, stack_path))
@@ -75,29 +83,13 @@ class PromptStackLoader:
         return paths
 
     def _get_random_file(self, dir_path: str, rng: SeededRandom) -> str:
-        candidates = []
-        for root, _, files in os.walk(dir_path):
-            for file in files:
-                if file.lower().endswith(".txt"):
-                    candidates.append(os.path.join(root, file))
+        candidates = glob.glob(os.path.join(dir_path, "**", "*.txt"), recursive=True)
         if candidates:
+            candidates.sort() # Ensure deterministic order across different OSs
             return rng.choice(candidates)
         return ""
 
-    def process(self, seed: int, base_dir: str, stack_file: str, inline_stack: str, override_context: bool = False, context: dict = None):
-        rng = SeededRandom(seed)
-        
-        resolved_base_dir = base_dir.strip()
-        if not resolved_base_dir:
-            resolved_base_dir = DEFAULT_PROMPT_ROOT
-        elif not os.path.isabs(resolved_base_dir):
-            # Anchor relative base_dir to the custom node's root directory.
-            # This allows portable paths like "prompts/arch" to resolve properly.
-            node_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-            resolved_base_dir = os.path.normpath(os.path.join(node_root, resolved_base_dir))
-            
-        raw_lines = self._resolve_paths(resolved_base_dir, stack_file, inline_stack)
-        
+    def _build_final_file_list(self, raw_lines: List[str], resolved_base_dir: str, rng: SeededRandom) -> List[str]:
         def _normalize_match(p: str) -> str:
             # Normalizes slashes and redundant ./ for cross-platform string matching.
             is_rand = p.startswith("random:")
@@ -181,6 +173,60 @@ class PromptStackLoader:
                     files_to_process.append(resolved_path)
                 else:
                     print(f"[Adaptive Prompts] Warning: Path '{resolved_path}' is not a valid file.")
+                    
+        return files_to_process
+
+    def _process_single_file(self, filepath: str, current_context: dict, rng: SeededRandom, override_context: bool) -> tuple[str, List[str]]:
+        lora_regex = re.compile(r"<lora:[^>]+>")
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                content = f.read()
+        except OSError as e:
+            print(f"[Adaptive Prompts] Warning: Failed to read file '{filepath}': {e}")
+            return "", []
+
+        # Extract LoRA tags directly from raw string
+        found_loras = lora_regex.findall(content)
+        cleaned_content = lora_regex.sub("", content)
+
+        snapshot = {}
+        if override_context:
+            snapshot = _snapshot_context(current_context)
+
+        # Replicability and Random Isolation:
+        # We generate a unique 'sub_seed' for this specific file using our master RNG.
+        # This isolates wildcard evaluation per file so adding wildcards to file A doesn't shift file B.
+        sub_seed = rng.randint(0, 0xffffffffffffffff)
+        sub_rng = SeededRandom(sub_seed)
+
+        # Evaluate text using core logic
+        evaluated_text = evaluate_prompt_core(
+            cleaned_content,
+            rng=sub_rng,
+            wildcard_dir=DEFAULT_WILDCARD_ROOT,
+            resolved_vars=current_context,
+            hide_comments=True
+        )
+
+        if override_context:
+            _apply_context_override(current_context, snapshot)
+
+        return evaluated_text.strip(), found_loras
+
+    def process(self, seed: int, base_dir: str, stack_file: str, inline_stack: str, override_context: bool = False, context: dict = None):
+        rng = SeededRandom(seed)
+        
+        resolved_base_dir = base_dir.strip()
+        if not resolved_base_dir:
+            resolved_base_dir = DEFAULT_PROMPT_ROOT
+        elif not os.path.isabs(resolved_base_dir):
+            # Anchor relative base_dir to the custom node's root directory.
+            # This allows portable paths like "prompts/arch" to resolve properly.
+            node_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+            resolved_base_dir = os.path.normpath(os.path.join(node_root, resolved_base_dir))
+            
+        raw_lines = self._resolve_paths(resolved_base_dir, stack_file, inline_stack)
+        files_to_process = self._build_final_file_list(raw_lines, resolved_base_dir, rng)
 
         current_context = {}
         if context is not None:
@@ -188,51 +234,14 @@ class PromptStackLoader:
         
         lora_tags = []
         accumulated_prompts = []
-        lora_regex = re.compile(r"<lora:[^>]+>")
 
         for filepath in files_to_process:
-            try:
-                with open(filepath, "r", encoding="utf-8") as f:
-                    content = f.read()
-            except OSError as e:
-                print(f"[Adaptive Prompts] Warning: Failed to read file '{filepath}': {e}")
-                continue
-                
-            found_loras = lora_regex.findall(content)
-            lora_tags.extend(found_loras)
-            cleaned_content = lora_regex.sub("", content)
+            evaluated_text, file_loras = self._process_single_file(filepath, current_context, rng, override_context)
+            if evaluated_text:
+                accumulated_prompts.append(evaluated_text)
+            lora_tags.extend(file_loras)
             
-            cleaned_content = re.sub(r",\s*,", ",", cleaned_content)
-            cleaned_content = re.sub(r"^\s*,\s*", "", cleaned_content)
-            cleaned_content = re.sub(r"\s*,\s*$", "", cleaned_content)
-            cleaned_content = " ".join(cleaned_content.split())
-            
-            snapshot = {}
-            if override_context:
-                for k, v in current_context.items():
-                    if isinstance(v, dict):
-                        snapshot[k] = list(v.keys())
-
-            # Evaluate text and capture the prompt string
-            evaluated_text = resolve_wildcards(
-                cleaned_content,
-                rng,
-                DEFAULT_WILDCARD_ROOT,
-                _resolved_vars=current_context
-            )
-            
-            if evaluated_text.strip():
-                accumulated_prompts.append(evaluated_text.strip())
-            
-            if override_context:
-                for k, old_keys in snapshot.items():
-                    if k in current_context and isinstance(current_context[k], dict):
-                        current_keys = list(current_context[k].keys())
-                        new_keys = [key for key in current_keys if key not in old_keys]
-                        if new_keys:
-                            for old_k in old_keys:
-                                del current_context[k][old_k]
-            
+        # Ensure context buckets are normalized
         for k, v in list(current_context.items()):
             if not isinstance(v, dict):
                 current_context[k] = _ensure_bucket_dict(v)
