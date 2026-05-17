@@ -10,7 +10,7 @@ Changes:
 """
 
 import os
-from .generator import resolve_wildcards, SeededRandom, sequence_prompt_elements
+from .generator import resolve_wildcards, SeededRandom, sequence_prompt_elements, evaluate_prompt_core
 from .string_utils import re
 from .wildcard_utils import _normalize_input_context, _ensure_bucket_dict, build_category_options
 
@@ -57,14 +57,9 @@ class PromptGenerator:
         # Normalize incoming context into dict-of-dicts (origin->value)
         normalized_context = _normalize_input_context(context)
 
-        comment_blocks = re.findall(r"##(.*?)##", prompt, flags=re.DOTALL)
-        
-        for block in comment_blocks:
-            _ = resolve_wildcards(block, rng, self.input_dir, _resolved_vars=normalized_context)
-        
-        prompt = re.sub(r"##.*?##", "", prompt, flags=re.DOTALL)
-        
-        result = resolve_wildcards(prompt, rng, self.input_dir, _resolved_vars=normalized_context)
+        result = evaluate_prompt_core(
+            prompt, rng, self.input_dir, resolved_vars=normalized_context, hide_comments=True
+        )
 
         #if cleanup:
         #result = " ".join(result.split())
@@ -129,16 +124,9 @@ class PromptGeneratorAdvanced:
         folder_map = getattr(self.__class__, "_CATEGORY_MAP", {}) or {}
         folder_name = folder_map.get(category_label, "wildcards")
 
-        # ----- handle comment blocks first -----
-        comment_blocks = re.findall(r"##(.*?)##", prompt, flags=re.DOTALL)
-        for block in comment_blocks:
-            _ = resolve_wildcards(block, rng, folder_name, _resolved_vars=normalized_context)
-
-        if hide_comments:
-            prompt = re.sub(r"##.*?##", "", prompt)
-
-        # ----- resolve main prompt -----
-        result = resolve_wildcards(prompt, rng, folder_name, _resolved_vars=normalized_context)
+        result = evaluate_prompt_core(
+            prompt, rng, folder_name, resolved_vars=normalized_context, hide_comments=hide_comments
+        )
 
         # Ensure context buckets are normalized
         for k, v in list(normalized_context.items()):
