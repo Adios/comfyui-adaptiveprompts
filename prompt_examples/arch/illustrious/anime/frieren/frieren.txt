@@ -83,3 +83,38 @@
 {
   chromatic aberration, film grain
 }^subject_finish
+
+## ========================================================================= ##
+## 5. MODULAR OUTFIT DEFINITIONS                                             ##
+## ========================================================================= ##
+## Layered clothing components deconstructed from inner to outer layers.     ##
+## Handles structural grouping of character-specific outfits.                ##
+## ========================================================================= ##
+{
+}^subject_outfit_inner_top,
+{
+}^subject_outfit_inner_bottom,
+
+{
+  __^subject_outfit_inner_top__,
+
+  shirt, striped shirt, long sleeves, white shirt, jewelry, earrings, striped, capelet
+}^subject_outfit_top,
+{
+  __^subject_outfit_inner_bottom__,
+
+  skirt
+}^subject_outfit_bottom,
+
+{
+}^subject_outfit_outer,
+
+{
+  __^subject_outfit_top__,
+  __^subject_outfit_bottom__,
+  __^subject_outfit_outer__
+}^subject_outfit,
+
+{
+  {shirt pull|shirt lift}
+}^subject_outfit_off
