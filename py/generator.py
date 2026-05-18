@@ -547,16 +547,30 @@ def process_bracket(content: str,
                 separator = raw_separator.encode("utf-8").decode("unicode_escape")
             except Exception:
                 separator = raw_separator
-
-        if count_part.strip() == "*":
+        
+        resolved_count = resolve_wildcards(
+            count_part, 
+            seeded_rng, 
+            wildcard_dir,
+            _resolved_vars=_resolved_vars,
+            bracket_ctx=bracket_ctx,
+            bracket_overflow=bracket_overflow
+        ).strip()
+        
+        if resolved_count == "*":
             exhaust_all = True
-        elif "-" in count_part:
-            lo, hi = map(int, count_part.split("-", 1))
-            count = seeded_rng.next_rng().randint(lo, hi)
+        elif "-" in resolved_count:
+            try:
+                lo_str, hi_str = resolved_count.split("-", 1)
+                lo = int(lo_str.strip())
+                hi = int(hi_str.strip())
+                count = seeded_rng.next_rng().randint(lo, hi)
+            except ValueError:
+                count = 1
         else:
             try:
-                count = int(count_part)
-            except Exception:
+                count = int(resolved_count)
+            except ValueError:
                 pass
 
     selection_mode = "roulette" if token == "??" else "deck"
