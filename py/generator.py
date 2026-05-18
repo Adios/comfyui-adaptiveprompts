@@ -311,32 +311,14 @@ def _choose_file_from_dir(dir_path: str,
         return None
     return rng.choice(candidates)
 
-def process_file_wildcard(name: str,
-                          rng: random.Random,
-                          wildcard_dir: str,
-                          bracket_ctx: dict | None = None) -> str:
-    """
-    file patterns supported (same as before). This version will:
-      - Try to resolve files relative to the provided wildcard_dir first.
-      - If a file/directory is missing there, attempt the equivalent path under
-        DEFAULT_WILDCARD_ROOT (the global '/wildcards/' fallback).
-      - If bracket_ctx is provided, draws are done WITHOUT replacement from a deck
-        (per-file) for the lifetime of this bracket; the deck key is the actual
-        filepath used (primary or fallback).
-    """
-    if not name:
-        return ""
-
-    # Normalize the incoming wildcard_dir (may be absolute path passed from PromptGenerator)
+# --- ADD THIS HELPER TO EXTRACT FILEPATH RESOLUTION ---
+def resolve_wildcard_path(name: str, rng: random.Random, wildcard_dir: str) -> str | None:
+    """Helper extracted from process_file_wildcard to keep file lookup DRY."""
     primary_dir = wildcard_dir or DEFAULT_WILDCARD_ROOT
 
-    # Helper: given a candidate absolute filepath (built from primary_dir), try using it,
-    # otherwise compute the fallback filepath and use that if it exists.
     def _resolve_filepath(candidate_fp: str) -> str | None:
-        # If candidate exists, use it
         if candidate_fp and os.path.exists(candidate_fp):
             return candidate_fp
-        # Try to compute a fallback path by converting from primary_dir -> DEFAULT_WILDCARD_ROOT
         try:
             rel = os.path.relpath(candidate_fp, primary_dir)
         except Exception:
@@ -347,22 +329,7 @@ def process_file_wildcard(name: str,
                 return fallback_fp
         return None
 
-    def draw_from_filepath(filepath: str) -> str:
-        # resolve actual filepath (primary -> fallback)
-        actual_fp = _resolve_filepath(filepath)
-        if not actual_fp:
-            return ""
-        # If no bracket context, do legacy single weighted draw
-        if bracket_ctx is None:
-            return _read_weighted_line(actual_fp, rng)
-        # Decked draw (no-repeat in this bracket) keyed by actual filepath
-        deck = _ensure_deck_for_file(bracket_ctx, actual_fp)
-        picked = _deck_draw(deck, rng, allow_overflow=bool(bracket_ctx.get("allow_overflow", True)))
-        return picked or ""
-
-    # If name references a subfolder / file
     name = name.strip("/")
-
     if "/" in name:
         dir_part, last = name.rsplit("/", 1)
         dir_path = os.path.join(primary_dir, dir_part)
@@ -371,38 +338,146 @@ def process_file_wildcard(name: str,
             prefix = None if last in ("", "*") else last[:-1]
             chosen = _choose_file_from_dir(dir_path, rng, prefix=prefix)
             if not chosen:
-                # try fallback directory
-                try:
-                    rel_dir = os.path.relpath(dir_path, primary_dir)
-                except Exception:
-                    rel_dir = os.path.basename(dir_path)
+                try: rel_dir = os.path.relpath(dir_path, primary_dir)
+                except Exception: rel_dir = os.path.basename(dir_path)
                 fallback_dir = os.path.join(DEFAULT_WILDCARD_ROOT, rel_dir)
                 chosen = _choose_file_from_dir(fallback_dir, rng, prefix=prefix)
-            return draw_from_filepath(chosen) if chosen else ""
+            return _resolve_filepath(chosen) if chosen else None
 
         filepath = os.path.join(dir_path, f"{last}.txt")
-        # try primary then fallback
-        return draw_from_filepath(filepath)
+        return _resolve_filepath(filepath)
 
-    # Root-level cases
     if name == "*":
         chosen = _choose_file_from_dir(primary_dir, rng, prefix=None)
-        if not chosen:
-            # fallback to default root
-            chosen = _choose_file_from_dir(DEFAULT_WILDCARD_ROOT, rng, prefix=None)
-        return draw_from_filepath(chosen) if chosen else ""
+        if not chosen: chosen = _choose_file_from_dir(DEFAULT_WILDCARD_ROOT, rng, prefix=None)
+        return _resolve_filepath(chosen) if chosen else None
 
     if name.endswith("*"):
         prefix = name[:-1]
         chosen = _choose_file_from_dir(primary_dir, rng, prefix=prefix)
-        if not chosen:
-            # fallback to default root
-            chosen = _choose_file_from_dir(DEFAULT_WILDCARD_ROOT, rng, prefix=prefix)
-        return draw_from_filepath(chosen) if chosen else ""
+        if not chosen: chosen = _choose_file_from_dir(DEFAULT_WILDCARD_ROOT, rng, prefix=prefix)
+        return _resolve_filepath(chosen) if chosen else None
 
-    # Specific file in primary dir -> fallback to default if missing
     filepath = os.path.join(primary_dir, f"{name}.txt")
-    return draw_from_filepath(filepath)
+    return _resolve_filepath(filepath)
+
+# --- REFACTORED ORIGINAL FUNCTION ---
+def process_file_wildcard(name: str,
+                          rng: random.Random,
+                          wildcard_dir: str,
+                          bracket_ctx: dict | None = None) -> str:
+    if not name:
+        return ""
+
+    actual_fp = resolve_wildcard_path(name, rng, wildcard_dir)
+    if not actual_fp:
+        return ""
+        
+    if bracket_ctx is None:
+        return _read_weighted_line(actual_fp, rng)
+    deck = _ensure_deck_for_file(bracket_ctx, actual_fp)
+    picked = _deck_draw(deck, rng, allow_overflow=bool(bracket_ctx.get("allow_overflow", True)))
+    return picked or ""
+
+# --- THE NEW SEQUENCER LOGIC ---
+_VARNAME_RE = re.compile(r"[A-Za-z0-9_\-]+") # Ensure this is accessible here
+
+def sequence_prompt_elements(prompt: str, seed: int, mode: str, wildcard_dir: str, _resolved_vars: dict, rng: random.Random) -> str:
+    """
+    Deterministically sequences top-level wildcards and brackets using modulo math.
+    """
+    elements = []
+    depth = 0
+    i = 0
+    L = len(prompt)
+
+    # 1. Parse Top-Level Elements
+    while i < L:
+        if prompt[i] == "{":
+            if depth == 0: start_idx = i
+            depth += 1
+        elif prompt[i] == "}":
+            if depth > 0: depth -= 1
+            if depth == 0:
+                end_idx = i + 1
+                var_name = None
+                if end_idx < L and prompt[end_idx] == "^":
+                    m_var = _VARNAME_RE.match(prompt, end_idx + 1)
+                    if m_var:
+                        var_name = m_var.group(0)
+                        end_idx += 1 + len(var_name)
+
+                inner = prompt[start_idx+1:i]
+                separators = _find_top_level_separators(inner)
+                choices_str = inner
+                if separators:
+                    idx = separators[-1][0]
+                    choices_str = inner[idx + 2:]
+
+                raw_choices = _split_top_level_pipes(choices_str)
+                options = [_extract_choice_weight(c)[0] for c in raw_choices]
+
+                if options:
+                    elements.append({
+                        'start': start_idx, 'end': end_idx,
+                        'type': 'bracket', 'options': options,
+                        'var_name': var_name
+                    })
+                i = end_idx - 1
+        elif depth == 0 and prompt.startswith("__", i):
+            m = FILE_PATTERN.match(prompt, i)
+            if m:
+                wc_name = m.group(1)
+                var_tok = m.group(2)
+                end_idx = m.end()
+
+                if wc_name:
+                    fp = resolve_wildcard_path(wc_name, rng, wildcard_dir)
+                    if fp:
+                        items, _ = _load_weighted_file(fp)
+                        if items:
+                            elements.append({
+                                'start': i, 'end': end_idx,
+                                'type': 'file', 'options': items,
+                                'var_name': var_tok, 'wc_name': wc_name
+                            })
+                i = end_idx - 1
+        i += 1
+
+    if not elements: return prompt
+
+    # 2. Calculate indices based on mode
+    if mode == "PARALLEL":
+        for el in elements:
+            el['idx'] = seed % len(el['options'])
+    elif mode == "FROM_START":
+        divisor = 1
+        for el in elements:
+            opts = el['options']
+            el['idx'] = (seed // divisor) % len(opts)
+            divisor *= len(opts)
+    elif mode == "FROM_END":
+        divisor = 1
+        for el in reversed(elements):
+            opts = el['options']
+            el['idx'] = (seed // divisor) % len(opts)
+            divisor *= len(opts)
+
+    # 3. Reconstruct string back-to-front
+    result = prompt
+    for el in reversed(elements):
+        chosen = el['options'][el['idx']]
+        if el['var_name']:
+            _ensure_var_bucket(_resolved_vars, el['var_name'])
+            if el['type'] == 'file':
+                _resolved_vars[el['var_name']][el['wc_name']] = chosen
+            else:
+                origin_key = f"__bracket_{len(_resolved_vars[el['var_name']])}"
+                _resolved_vars[el['var_name']][origin_key] = chosen
+
+        result = result[:el['start']] + chosen + result[el['end']:]
+
+    return result
 
 def weighted_choice(options: list[str], rng: random.Random) -> str:
     items, weights = _parse_weighted_options(options)

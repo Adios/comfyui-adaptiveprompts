@@ -10,7 +10,7 @@ Changes:
 """
 
 import os
-from .generator import resolve_wildcards, SeededRandom
+from .generator import resolve_wildcards, SeededRandom, sequence_prompt_elements
 from .string_utils import re
 from .wildcard_utils import _normalize_input_context, _ensure_bucket_dict, build_category_options
 
@@ -222,3 +222,67 @@ class PromptContextMerge:
                 combined[var][key_to_use] = val
 
         return (combined,)
+
+
+
+
+class PromptSequencer:
+    """
+    Deterministic generation node.
+    Sequences top-level wildcards and brackets sequentially based on the seed.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        labels, mapping, tooltip = build_category_options()
+        cls._CATEGORY_LABELS = labels
+        cls._CATEGORY_MAP = mapping
+        return {
+            "required": {
+                "prompt": ("STRING", {"multiline": True}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
+                "mode": (["FROM_START", "FROM_END", "PARALLEL"], {"default": "FROM_START"}),
+                "hide_comments": ("BOOLEAN", {"default": True}),
+                "category": (labels, {"default": labels[0] if labels else "Default", "tooltip": tooltip}),
+            },
+            "optional": {
+                "context": ("DICT", {}),
+            },
+        }
+
+    RETURN_TYPES = ("STRING", "DICT")
+    RETURN_NAMES = ("prompt", "context")
+    FUNCTION = "process"
+    CATEGORY = "adaptiveprompts/generation"
+
+    # ---------- main ----------
+    def process(self, prompt, seed, mode, hide_comments, category=None, context=None):
+        rng = SeededRandom(seed)
+        normalized_context = _normalize_input_context(context)
+
+        category_label = category if category is not None else (
+            getattr(self.__class__, "_CATEGORY_LABELS", ["Default"])[0]
+        )
+        folder_map = getattr(self.__class__, "_CATEGORY_MAP", {}) or {}
+        folder_name = folder_map.get(category_label, "wildcards")
+
+        # ----- handle comment blocks first -----
+        comment_blocks = re.findall(r"##(.*?)##", prompt, flags=re.DOTALL)
+        for block in comment_blocks:
+            seq_block = sequence_prompt_elements(block, seed, mode, folder_name, normalized_context, rng)
+            _ = resolve_wildcards(seq_block, rng, folder_name, _resolved_vars=normalized_context)
+
+        if hide_comments:
+            prompt = re.sub(r"##.*?##", "", prompt, flags=re.DOTALL)
+
+        # ----- Sequence Main Prompt -----
+        sequenced_prompt = sequence_prompt_elements(prompt, seed, mode, folder_name, normalized_context, rng)
+        
+        # Resolve any remaining nested elements organically
+        result = resolve_wildcards(sequenced_prompt, rng, folder_name, _resolved_vars=normalized_context)
+
+        for k, v in list(normalized_context.items()):
+            if not isinstance(v, dict):
+                normalized_context[k] = _ensure_bucket_dict(v)
+
+        return (result, normalized_context)

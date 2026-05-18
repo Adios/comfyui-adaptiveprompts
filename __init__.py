@@ -1,8 +1,7 @@
 import os
 from .py.prompt_repack import PromptRepack
 from .py.prompt_replace import PromptReplace
-from .py.prompt_generator import PromptGenerator, PromptGeneratorAdvanced, PromptContextMerge
-from .py.prompt_sequencer import PromptSequencer
+from .py.prompt_generator import PromptGenerator, PromptGeneratorAdvanced, PromptContextMerge, PromptSequencer
 from .py.weight_lifter import WeightLifter
 from .py.image_nodes import SaveImageAndText
 from .py.prompt_alias import PromptAliasSwap
