@@ -2,7 +2,7 @@ import os
 import re
 from typing import Dict, List, Tuple, Optional
 from .generator import SeededRandom
-from .wildcard_utils import build_category_options, _default_package_root
+from .wildcard_utils import build_category_options, _default_package_root, is_conditional_bracket_content
 
 class WildcardPreprocessor:
     """
@@ -301,6 +301,17 @@ class PromptRepack:
                     i += 1
                     continue
                 inner = text[i + 1:j]
+                
+                # Check for conditionals. Do not expand conditional branches.
+                first_choice = inner.split('|')[0].strip()
+                if is_conditional_bracket_content(first_choice):
+                    # Treat the entire bracket block as literal text
+                    literal_block = text[i:j + 1]
+                    for seg in segments:
+                        seg.append(literal_block)
+                    i = j + 1
+                    continue
+                    
                 choices = [c.strip() for c in inner.split('|') if c.strip() != '']
                 # cartesian product update
                 new_segments: List[List[str]] = []
