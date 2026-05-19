@@ -1119,3 +1119,17 @@ def resolve_wildcards(text: str,
     text = _restore_escaped_wildcards(text, _escaped_wildcard_map)
     text = text.replace(_ADJ_WC_MARKER, "")
     return text
+
+def evaluate_prompt_core(prompt: str, rng: SeededRandom, wildcard_dir: str, resolved_vars: dict, hide_comments: bool = True) -> str:
+    """
+    Evaluates comments blocks first, optionally removes them, then evaluates the main prompt string.
+    This is the core execution logic shared by PromptGenerator and PromptStackLoader.
+    """
+    comment_blocks = re.findall(r"##(.*?)##", prompt, flags=re.DOTALL)
+    for block in comment_blocks:
+        _ = resolve_wildcards(block, rng, wildcard_dir, _resolved_vars=resolved_vars)
+
+    if hide_comments:
+        prompt = re.sub(r"##.*?##", "", prompt, flags=re.DOTALL)
+
+    return resolve_wildcards(prompt, rng, wildcard_dir, _resolved_vars=resolved_vars)
