@@ -1,8 +1,8 @@
 import os
 import re
 from typing import Dict, List, Tuple, Optional
-from .generator import SeededRandom
-from .wildcard_utils import build_category_options, _default_package_root
+from .generator import SeededRandom, evaluate_prompt_core
+from .wildcard_utils import build_category_options, _default_package_root, _normalize_input_context, _ensure_bucket_dict
 
 class WildcardPreprocessor:
     """
@@ -190,13 +190,17 @@ class PromptRepack:
                 "blacklist_file": (blacklist_files, {"default": "blacklist.txt"}),
                 "refresh_cache": ("BOOLEAN", {"default": False, "tooltip": "Reload wildcards and blacklist caches."}),
                 "category": (labels, {"default": labels[0] if labels else "Default", "tooltip": tooltip}),
+            },
+            "optional": {
+                "context": ("DICT", {"tooltip": "Optional upstream context to build upon."}),
             }
         }
 
-    RETURN_TYPES = ("STRING",)
+    RETURN_TYPES = ("STRING", "STRING", "DICT")
+    RETURN_NAMES = ("repacked_prompt", "generated_prompt", "context")
     FUNCTION = "repack"
     CATEGORY = "adaptiveprompts/generation"
-
+ 
     # ------------------- init & paths -------------------
 
     def __init__(self):
@@ -572,7 +576,7 @@ class PromptRepack:
 
     def repack(self, string: str, detection_mode: str, matching_mode: str,
                index_brackets: bool, chance: float, seed: int,
-               blacklist_file: str, refresh_cache: bool = False, category=None):
+               blacklist_file: str, refresh_cache: bool = False, category=None, context=None):
 
         # Resolve category label -> folder path
         category_label = category if category is not None else (
@@ -612,10 +616,32 @@ class PromptRepack:
         rng = SeededRandom(seed)
 
         if detection_mode == "prioritize_words":
-            out = self._replace_words(string, word_index, matching_mode, rng, chance)
-            return (out,)
+            repacked_prompt = self._replace_words(string, word_index, matching_mode, rng, chance)
+        else:
+            # phrases first, then words
+            with_phrases = self._replace_phrases_first(string, phrase_index, matching_mode, rng, chance)
+            repacked_prompt = self._replace_words(with_phrases, word_index, matching_mode, rng, chance)
 
-        # phrases first, then words
-        with_phrases = self._replace_phrases_first(string, phrase_index, matching_mode, rng, chance)
-        out = self._replace_words(with_phrases, word_index, matching_mode, rng, chance)
-        return (out,)
+        # --- NEW: Integrated Generation Logic ---
+        # We spawn a fresh RNG from the same seed so the resolution matches 
+        # exactly what a downstream PromptGenerator would have produced.
+        eval_rng = SeededRandom(seed)
+        
+        # Normalize incoming context
+        normalized_context = _normalize_input_context(context)
+
+        # Resolve the newly repacked string into its final form
+        generated_prompt = evaluate_prompt_core(
+            repacked_prompt, 
+            eval_rng, 
+            wildcard_dir, 
+            resolved_vars=normalized_context, 
+            hide_comments=True
+        )
+
+        # Ensure context buckets are cleanly normalized before outputting
+        for k, v in list(normalized_context.items()):
+            if not isinstance(v, dict):
+                normalized_context[k] = _ensure_bucket_dict(v)
+
+        return (repacked_prompt, generated_prompt, normalized_context)
