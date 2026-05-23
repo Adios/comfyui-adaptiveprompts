@@ -16,6 +16,8 @@ import random
 import hashlib
 from .config import get_config
 
+from .plugin_registry import PluginRegistry
+
 BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 
 # Wildcards + variables:
@@ -610,6 +612,15 @@ def process_bracket(content: str,
       - consider choice weights with %#.###
       - nested bracket/wildcard resolution for both choices and separators
     """
+    if _resolved_vars is None:
+        _resolved_vars = {}
+
+    # --- PLUGIN REGISTRY HOOK ---
+    plugin_repl = PluginRegistry.dispatch_bracket(content, seeded_rng, wildcard_dir, _resolved_vars)
+    if plugin_repl is not None:
+        return plugin_repl
+    # ----------------------------
+
     count = 1
     exhaust_all = False
     separator = ", "
@@ -838,6 +849,15 @@ def _final_sweep_resolve(text: str,
         wc_name = m.group(1)
         var_tok = m.group(2)
 
+        # --- PLUGIN REGISTRY HOOK ---
+        plugin_repl = PluginRegistry.dispatch_wildcard(full_token, wc_name, var_tok, seeded_rng, wildcard_dir, _resolved_vars)
+        if plugin_repl is not None:
+            text = text[:m.start()] + plugin_repl + text[m.end():]
+            i = m.start() + len(plugin_repl)
+            changed = True
+            continue
+        # ----------------------------
+
         # --- Calculate Wildcard Identity ---
         identity_str = f"wc_{wc_name}_{var_tok}"
         local_rng = seeded_rng.branch(identity_str)
@@ -1058,6 +1078,15 @@ def resolve_wildcards(text: str,
                 full_token = m_file.group(0)
                 wc_name = m_file.group(1)
                 var_tok = m_file.group(2)
+
+                # --- PLUGIN REGISTRY HOOK ---
+                plugin_repl = PluginRegistry.dispatch_wildcard(full_token, wc_name, var_tok, seeded_rng, wildcard_dir, _resolved_vars)
+                if plugin_repl is not None:
+                    working = working[:m_file.start()] + plugin_repl + working[m_file.end():]
+                    changed = True
+                    working = _space_adjacent_wildcards(working)
+                    continue
+                # ----------------------------
 
                 # --- Calculate Wildcard Identity ---
                 identity_str = f"wc_{wc_name}_{var_tok}"
