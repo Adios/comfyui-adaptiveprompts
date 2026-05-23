@@ -14,6 +14,7 @@ import re
 import os
 import random
 import hashlib
+from .config import get_config
 
 BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 
@@ -36,11 +37,16 @@ DEFAULT_WILDCARD_ROOT = os.path.abspath(
 # -------------------------------- RNG ---------------------------------------
 
 class SeededRandom:
-    def __init__(self, base_seed: int, mode: str = "Signature", occurrence_counts: dict | None = None):
+    def __init__(self, base_seed: int, mode: str = None, occurrence_counts: dict | None = None):
         self.base_seed = base_seed
         self.seed = base_seed
-        self.mode = mode
-        # Shared dictionary to track how many times a specific identity has been rolled
+        
+        # FIX: Resolve the config at instantiation, not definition
+        if mode is None:
+            self.mode = get_config("default_rng_mode")
+        else:
+            self.mode = mode
+            
         self.occurrence_counts = occurrence_counts if occurrence_counts is not None else {}
 
     def branch(self, identity: str) -> 'SeededRandom':
@@ -326,9 +332,8 @@ def _choose_file_from_dir(dir_path: str,
         return None
     return rng.choice(candidates)
 
-# --- ADD THIS HELPER TO EXTRACT FILEPATH RESOLUTION ---
+
 def resolve_wildcard_path(name: str, rng: random.Random, wildcard_dir: str) -> str | None:
-    """Helper extracted from process_file_wildcard to keep file lookup DRY."""
     primary_dir = wildcard_dir or DEFAULT_WILDCARD_ROOT
 
     def _resolve_filepath(candidate_fp: str) -> str | None:
@@ -376,7 +381,6 @@ def resolve_wildcard_path(name: str, rng: random.Random, wildcard_dir: str) -> s
     filepath = os.path.join(primary_dir, f"{name}.txt")
     return _resolve_filepath(filepath)
 
-# --- REFACTORED ORIGINAL FUNCTION ---
 def process_file_wildcard(name: str,
                           rng: random.Random,
                           wildcard_dir: str,
@@ -394,8 +398,7 @@ def process_file_wildcard(name: str,
     picked = _deck_draw(deck, rng, allow_overflow=bool(bracket_ctx.get("allow_overflow", True)))
     return picked or ""
 
-# --- THE NEW SEQUENCER LOGIC ---
-_VARNAME_RE = re.compile(r"[A-Za-z0-9_\-]+") # Ensure this is accessible here
+_VARNAME_RE = re.compile(r"[A-Za-z0-9_\-]+")
 
 def sequence_prompt_elements(prompt: str, seed: int, mode: str, wildcard_dir: str, _resolved_vars: dict, rng: random.Random) -> str:
     """
@@ -912,7 +915,8 @@ def resolve_wildcards(text: str,
       - After the normal iterative passes, runs a final sweep attempting to resolve
         any remaining variable/wildcard tokens once more; removes ones that cannot be resolved.
     """
-    if _depth > 80:
+    search_depth_limit = get_config("search_depth_limit")
+    if _depth > search_depth_limit:
         return text
 
     if _resolved_vars is None:
@@ -1168,6 +1172,9 @@ def evaluate_prompt_core(prompt: str, rng: SeededRandom, wildcard_dir: str, reso
     Evaluates comments blocks first, optionally removes them, then evaluates the main prompt string.
     This is the core execution logic shared by PromptGenerator and PromptStackLoader.
     """
+    if hide_comments is None:
+        hide_comments = get_config("hide_comments")
+    
     comment_blocks = re.findall(r"##(.*?)##", prompt, flags=re.DOTALL)
     for block in comment_blocks:
         _ = resolve_wildcards(block, rng, wildcard_dir, _resolved_vars=resolved_vars)
