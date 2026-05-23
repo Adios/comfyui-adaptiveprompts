@@ -182,7 +182,12 @@ class PromptRepack:
         return {
             "required": {
                 "string": ("STRING", {"multiline": True, "default": ""}),
-                "detection_mode": (["prioritize_words", "prioritize_phrase"], {"default": "prioritize_phrase", "tooltip": detection_tip}),
+                "detection_priority": ("BOOLEAN", {
+                    "default": True, 
+                    "label_on": "Phrases", 
+                    "label_off": "Words", 
+                    "tooltip": detection_tip
+                }),
                 "matching_mode": (["exact", "ignore_case", "flexible"], {"default": "flexible", "tooltip": matching_tip}),
                 "index_brackets": ("BOOLEAN", {"default": False, "tooltip": "If true, expand {a|b} combos into all indexed variants. Otherwise, lines with braces are skipped from indexing."}),
                 "chance": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.05}),
@@ -272,14 +277,18 @@ class PromptRepack:
     # ------------------- uniform indexing & brace expansion -------------------
 
     @staticmethod
-    def _uniform_index_key(s: str) -> str:
+    def _uniform_index_key(s: str, matching_mode: str) -> str:
         """
-        Lowercase, trim, and replace any run of whitespace with a single underscore.
-        Do NOT unescape backslashes; do NOT touch underscores/hyphens, etc.
+        Builds the search key based on matching mode.
         """
-        t = s.strip().lower()
-        t = re.sub(r'\s+', '_', t)
-        return t
+        t = s.strip()
+        if matching_mode == "exact":
+            return t
+        elif matching_mode == "ignore_case":
+            return t.lower()
+        else:  # flexible
+            t = t.lower()
+            return re.sub(r'\s+', '_', t)
 
     @staticmethod
     def _has_brace(s: str) -> bool:
@@ -350,14 +359,17 @@ class PromptRepack:
                 expanded_values = [value]
 
             for v in expanded_values:
-                key = self._uniform_index_key(v)
+                # Pass matching_mode to properly respect spaces
+                key = self._uniform_index_key(v, matching_mode)
                 if not key:
                     continue
-                # classify by underscore presence: phrases contain '_', words do not
-                if '_' in key:
+                
+                # Classify by space OR underscore presence
+                if '_' in key or ' ' in key:
                     bucket = phrase_index.setdefault(key, [])
                 else:
                     bucket = word_index.setdefault(key, [])
+                    
                 if wildcard_name not in bucket:
                     bucket.append(wildcard_name)
 
@@ -574,7 +586,7 @@ class PromptRepack:
 
     # ------------------- ComfyUI entry -------------------
 
-    def repack(self, string: str, detection_mode: str, matching_mode: str,
+    def repack(self, string: str, detection_priority: bool, matching_mode: str,
                index_brackets: bool, chance: float, seed: int,
                blacklist_file: str, refresh_cache: bool = False, category=None, context=None):
 
@@ -615,7 +627,7 @@ class PromptRepack:
 
         rng = SeededRandom(seed)
 
-        if detection_mode == "prioritize_words":
+        if not detection_priority:
             repacked_prompt = self._replace_words(string, word_index, matching_mode, rng, chance)
         else:
             # phrases first, then words

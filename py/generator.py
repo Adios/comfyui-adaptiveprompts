@@ -13,7 +13,7 @@ Changes:
 import re
 import os
 import random
-
+import hashlib
 
 BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 
@@ -36,31 +36,46 @@ DEFAULT_WILDCARD_ROOT = os.path.abspath(
 # -------------------------------- RNG ---------------------------------------
 
 class SeededRandom:
-    def __init__(self, base_seed: int):
+    def __init__(self, base_seed: int, mode: str = "Signature", occurrence_counts: dict | None = None):
+        self.base_seed = base_seed
         self.seed = base_seed
+        self.mode = mode
+        # Shared dictionary to track how many times a specific identity has been rolled
+        self.occurrence_counts = occurrence_counts if occurrence_counts is not None else {}
+
+    def branch(self, identity: str) -> 'SeededRandom':
+        """Creates a new isolated SeededRandom based on the identity."""
+        if self.mode == "Signature":
+            count = self.occurrence_counts.get(identity, 0)
+            self.occurrence_counts[identity] = count + 1
+            
+            # Create a stable, deterministic hash for cross-session consistency
+            hash_str = f"{self.base_seed}_{identity}_{count}"
+            stable_seed = int(hashlib.md5(hash_str.encode('utf-8')).hexdigest(), 16)
+            
+            # Return a new RNG branch that shares the global occurrence tracker
+            return SeededRandom(stable_seed, mode=self.mode, occurrence_counts=self.occurrence_counts)
+        else:
+            # Classic mode: advance sequentially and branch
+            self.seed += 1
+            return SeededRandom(self.seed, mode=self.mode, occurrence_counts=self.occurrence_counts)
 
     def next_rng(self) -> random.Random:
-        """
-        Advances the seed and returns a new Random instance.
-        """
+        """Advances the internal sequence and returns a standard random.Random instance."""
         self.seed += 1
         return random.Random(self.seed)
 
     def random(self) -> float:
-        rng = self.next_rng()
-        return rng.random()
+        return self.next_rng().random()
 
     def uniform(self, a: float, b: float) -> float:
-        rng = self.next_rng()
-        return rng.uniform(a, b)
+        return self.next_rng().uniform(a, b)
 
     def randint(self, a: int, b: int) -> int:
-        rng = self.next_rng()
-        return rng.randint(a, b)
+        return self.next_rng().randint(a, b)
 
     def choice(self, seq):
-        rng = self.next_rng()
-        return rng.choice(seq)
+        return self.next_rng().choice(seq)
 
 # ------------------------- Quick taggers/helpers ----------------------------
 
@@ -690,7 +705,7 @@ def process_bracket(content: str,
                 results.extend(vals)
             else:
                 eval_seed = seeded_rng.next_rng().getrandbits(64)
-                eval_rng = SeededRandom(eval_seed)
+                eval_rng = SeededRandom(eval_seed, mode=seeded_rng.mode, occurrence_counts=seeded_rng.occurrence_counts)
                 resolved = resolve_wildcards(
                     original, eval_rng, wildcard_dir,
                     _resolved_vars=_resolved_vars,
@@ -705,7 +720,7 @@ def process_bracket(content: str,
             joined = results[0]
             for item in results[1:]:
                 sep_seed = seeded_rng.next_rng().getrandbits(64)
-                sep_rng = SeededRandom(sep_seed)
+                sep_rng = SeededRandom(sep_seed, mode=seeded_rng.mode, occurrence_counts=seeded_rng.occurrence_counts)
                 sep_resolved = resolve_wildcards(
                     separator, sep_rng, wildcard_dir,
                     _resolved_vars=_resolved_vars,
@@ -730,7 +745,7 @@ def process_bracket(content: str,
         kind, canonical, original, var_tok = key
 
         eval_seed = seeded_rng.next_rng().getrandbits(64)
-        eval_rng = SeededRandom(eval_seed)
+        eval_rng = SeededRandom(eval_seed, mode=seeded_rng.mode, occurrence_counts=seeded_rng.occurrence_counts)
 
         if kind == "lit":
             return resolve_wildcards(
@@ -784,7 +799,7 @@ def process_bracket(content: str,
     joined = results[0]
     for item in results[1:]:
         sep_seed = seeded_rng.next_rng().getrandbits(64)
-        sep_rng = SeededRandom(sep_seed)
+        sep_rng = SeededRandom(sep_seed, mode=seeded_rng.mode, occurrence_counts=seeded_rng.occurrence_counts)
         sep_resolved = resolve_wildcards(
             separator, sep_rng, wildcard_dir,
             _resolved_vars=_resolved_vars,
@@ -820,18 +835,22 @@ def _final_sweep_resolve(text: str,
         wc_name = m.group(1)
         var_tok = m.group(2)
 
+        # --- Calculate Wildcard Identity ---
+        identity_str = f"wc_{wc_name}_{var_tok}"
+        local_rng = seeded_rng.branch(identity_str)
+
         replacement = None
 
         if wc_name is None and var_tok:
             candidates = _collect_candidates(_resolved_vars, var_tok, origin_filter=None)
             if candidates:
-                replacement = seeded_rng.next_rng().choice(candidates)
+                replacement = local_rng.next_rng().choice(candidates)
             else:
-                # fallback: try to resolve a wildcard file named var_tok (i.e., __^var__ (if no variable resolved, then -> __var__))
-                rng_for_this = seeded_rng.next_rng()
+                # fallback: try to resolve a wildcard file named var_tok
+                rng_for_this = local_rng.next_rng()
                 generated = process_file_wildcard(var_tok, rng_for_this, wildcard_dir, bracket_ctx=None)
                 if generated and (generated == full_token or generated.strip() == full_token.strip()) is False:
-                    replacement = resolve_wildcards(generated, seeded_rng, wildcard_dir,
+                    replacement = resolve_wildcards(generated, local_rng, wildcard_dir,
                                                    _depth=_depth + 1, _resolved_vars=_resolved_vars)
                 else:
                     replacement = ""
@@ -839,7 +858,7 @@ def _final_sweep_resolve(text: str,
             if "*" in var_tok:
                 candidates = _collect_candidates(_resolved_vars, var_tok, origin_filter=wc_name)
                 if candidates:
-                    replacement = seeded_rng.next_rng().choice(candidates)
+                    replacement = local_rng.next_rng().choice(candidates)
                 else:
                     replacement = ""
             else:
@@ -847,11 +866,11 @@ def _final_sweep_resolve(text: str,
                 if wc_name in bucket:
                     replacement = bucket[wc_name]
                 else:
-                    rng_for_this = seeded_rng.next_rng()
+                    rng_for_this = local_rng.next_rng()
                     generated = process_file_wildcard(wc_name, rng_for_this, wildcard_dir, bracket_ctx=None)
                     if generated and (generated == full_token or generated.strip() == full_token.strip()) is False:
                         replacement = resolve_wildcards(
-                            generated, seeded_rng, wildcard_dir,
+                            generated, local_rng, wildcard_dir,
                             _depth=_depth + 1, _resolved_vars=_resolved_vars
                         )
                         _ensure_var_bucket(_resolved_vars, var_tok)
@@ -861,11 +880,11 @@ def _final_sweep_resolve(text: str,
                     else:
                         replacement = ""
         else:
-            rng_for_this = seeded_rng.next_rng()
+            rng_for_this = local_rng.next_rng()
             generated = process_file_wildcard(wc_name, rng_for_this, wildcard_dir, bracket_ctx=None)
             if generated and (generated == full_token or generated.strip() == full_token.strip()) is False:
                 replacement = resolve_wildcards(
-                    generated, seeded_rng, wildcard_dir,
+                    generated, local_rng, wildcard_dir,
                     _depth=_depth + 1, _resolved_vars=_resolved_vars
                 )
             else:
@@ -943,9 +962,30 @@ def resolve_wildcards(text: str,
 
                 if take_bracket:
                     content = working[br_start + 1: br_end]
+                    
+                    # --- NEW: Calculate Bracket Identity ---
+                    separators = _find_top_level_separators(content)
+                    if separators:
+                        if len(separators) == 1:
+                            count_part = content[:separators[0][0]]
+                            choices_str = content[separators[0][0] + 2:]
+                        else:
+                            count_part = content[:separators[0][0]]
+                            choices_str = content[separators[1][0] + 2:]
+                    else:
+                        count_part = "1"
+                        choices_str = content
+                    
+                    num_choices = len(_split_top_level_pipes(choices_str))
+                    bracket_identity = f"bracket_{count_part.strip()}_{num_choices}"
+                    
+                    # Create our isolated RNG branch for this bracket
+                    local_rng = seeded_rng.branch(bracket_identity)
+
+                    # Now pass local_rng instead of seeded_rng!
                     repl = process_bracket(
                         content,
-                        seeded_rng,
+                        local_rng,
                         wildcard_dir,
                         _resolved_vars=_resolved_vars,
                         bracket_ctx=bracket_ctx,
@@ -974,7 +1014,7 @@ def resolve_wildcards(text: str,
                             while attempt < max_attempts:
                                 attempt += 1
                                 candidate = process_bracket(
-                                    content, seeded_rng, wildcard_dir,
+                                    content, local_rng, wildcard_dir,
                                     _resolved_vars=_resolved_vars,
                                     bracket_ctx=bracket_ctx,
                                     bracket_overflow=bracket_overflow
@@ -1015,21 +1055,25 @@ def resolve_wildcards(text: str,
                 wc_name = m_file.group(1)
                 var_tok = m_file.group(2)
 
+                # --- Calculate Wildcard Identity ---
+                identity_str = f"wc_{wc_name}_{var_tok}"
+                local_rng = seeded_rng.branch(identity_str)
+
                 replacement = ""
 
                 if wc_name is None and var_tok:
                     # pure variable recall __^var__
-                    rng_local = seeded_rng.next_rng()
+                    rng_local = local_rng.next_rng()
                     candidates = _collect_candidates(_resolved_vars, var_tok, origin_filter=None)
                     if candidates:
                         replacement = rng_local.choice(candidates)
                     else:
                         # fallback: try to resolve a wildcard file named var_tok (i.e., __var_tok__)
-                        rng_for_this = seeded_rng.next_rng()
+                        rng_for_this = local_rng.next_rng()
                         generated = process_file_wildcard(var_tok, rng_for_this, wildcard_dir, bracket_ctx=None)
                         if generated:
                             replacement = resolve_wildcards(
-                                generated, seeded_rng, wildcard_dir,
+                                generated, local_rng, wildcard_dir,
                                 _depth=_depth + 1, _resolved_vars=_resolved_vars,
                                 bracket_ctx=None,
                                 bracket_overflow=bracket_overflow
@@ -1040,7 +1084,7 @@ def resolve_wildcards(text: str,
                 elif wc_name is not None and var_tok:
                     # __file^var__ or __name^var__  (assignment or origin-scoped recall)
                     if "*" in var_tok:
-                        rng_local = seeded_rng.next_rng()
+                        rng_local = local_rng.next_rng()
                         candidates = _collect_candidates(_resolved_vars, var_tok, origin_filter=wc_name)
                         if candidates:
                             replacement = rng_local.choice(candidates)
@@ -1052,13 +1096,13 @@ def resolve_wildcards(text: str,
                             replacement = bucket[wc_name]
                         else:
                             # generate once and store under var_tok[wildcard_name]
-                            rng_for_this = seeded_rng.next_rng()
+                            rng_for_this = local_rng.next_rng()
                             generated = process_file_wildcard(wc_name, rng_for_this, wildcard_dir, bracket_ctx=bracket_ctx)
                             if not generated or generated == full_token or generated.strip() == full_token.strip():
                                 replacement = None
                             else:
                                 replacement = resolve_wildcards(
-                                    generated, seeded_rng, wildcard_dir,
+                                    generated, local_rng, wildcard_dir,
                                     _depth=_depth + 1, _resolved_vars=_resolved_vars,
                                     bracket_ctx=bracket_ctx,
                                     bracket_overflow=bracket_overflow
@@ -1071,13 +1115,13 @@ def resolve_wildcards(text: str,
 
                 else:
                     # plain wildcard: __name__
-                    rng_for_this = seeded_rng.next_rng()
+                    rng_for_this = local_rng.next_rng()
                     generated = process_file_wildcard(wc_name, rng_for_this, wildcard_dir, bracket_ctx=bracket_ctx)
                     if not generated or generated == full_token or generated.strip() == full_token.strip():
                         replacement = None
                     else:
                         replacement = resolve_wildcards(
-                            generated, seeded_rng, wildcard_dir,
+                            generated, local_rng, wildcard_dir,
                             _depth=_depth + 1, _resolved_vars=_resolved_vars,
                             bracket_ctx=bracket_ctx,
                             bracket_overflow=bracket_overflow
@@ -1109,7 +1153,6 @@ def resolve_wildcards(text: str,
         text = new_text
         text = _space_adjacent_wildcards(text)
 
-    # Final sweep (no bracket context here)
     # Final sweep (no bracket context here)
     text = _final_sweep_resolve(
         text, seeded_rng, wildcard_dir, _resolved_vars, _depth,
