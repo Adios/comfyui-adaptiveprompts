@@ -274,7 +274,6 @@ Input: ```##  Hehehe I'm so sneaky...## Huh, must have been the wind.```
 Output: ```Huh, must have been the wind.```
 
 ## ⚡Variables
-
 Variables can be assigned and accessed in a few different ways. They can even be accessed from within wildcards. They can technically be set within wildcards, but i wouldn't recommend it due to how the ordering is done.
 
 ### ✏️ Variable Assignment 
@@ -337,6 +336,39 @@ Using all of these tricks, you can achieve some pretty powerful results!
 
 
 <img src="images/prompt_generator_variables_example.png"/>
+
+## 🔀 Conditional Branching & Logic
+You can now program simple logic directly into your prompts using the `switch(var)` statement! This is incredibly useful for avoiding prompt conflicts (e.g., ensuring "shoes" doesn't appear in a "close-up" portrait).
+
+> [!TIP]
+> **When to use Conditionals vs Nodes:** 
+> While you *can* program complex logic purely with text conditionals, **it is highly recommended to use nodes for macro-level choices.** For example, if you are designing entirely different scenes (like a "from above" layout vs. a "side view" layout), it is much easier to maintain separate Prompt Generators for each, and route them using nodes like `Random Integers 4` combined with `Switch Any (Impact Pack)`. 
+> 
+> Keep your text-based `switch` statements reserved for **micro-adjustments and fine-tuning** (such as resolving clothing conflicts or swapping a specific detail).
+
+### The Switch Statement
+For branching based on a variable, you can use `{switch(var) | case: result | default: result}`. It checks the variable's value and outputs the matching `case`.
+
+```text
+{switch(view)
+  | close-up: (detailed face:1.2), portrait
+  | full-body: standing, shoes, full shot
+  | cowboy: cowboy shot, belt
+  | default: 
+      # The default branch executes if no cases match
+      {some|other|wildcard}
+}
+```
+
+> [!NOTE]
+> **The `default` Keyword:** The case label `default:` is reserved as the fallback branch. If your variable happens to resolve to the literal string `"default"`, it will trigger this fallback branch. If you define multiple `default:` cases in a single switch block, only the last one will be used.
+
+> [!WARNING]
+> **Switch Case Delimiters (Colons):** Because `switch` syntax relies on `:` as a delimiter (`| case: result`), it cannot safely match exact strings that contain unwrapped colons. Colons wrapped in `( )`, `{ }`, or `[ ]` will parse perfectly (e.g., `(apple: 0.8): result`), but raw, unwrapped colons will break the parser.
+
+### Compatibility with Wildcards
+- **Wildcard Files**: You can use conditionals inside `.txt` wildcard files. However, because wildcard files are read line-by-line, your entire `{switch(...)|...}` statement must be written on a single line.
+
 
 ## 🎞️ Prompt Sequencer
 

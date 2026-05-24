@@ -1,5 +1,6 @@
 # wildcard_utils.py
 import os
+import re
 import functools
 
 
@@ -121,3 +122,71 @@ def clear_category_cache():
     and need the dropdowns to refresh).
     """
     build_category_options.cache_clear()
+
+def _split_case_result(choice: str) -> tuple[str, str | None]:
+    paren_depth = 0
+    brace_depth = 0
+    bracket_depth = 0
+    for i, c in enumerate(choice):
+        if c == '(': paren_depth += 1
+        elif c == ')': paren_depth -= 1
+        elif c == '{': brace_depth += 1
+        elif c == '}': brace_depth -= 1
+        elif c == '[': bracket_depth += 1
+        elif c == ']': bracket_depth -= 1
+        elif c == ':' and paren_depth == 0 and brace_depth == 0 and bracket_depth == 0:
+            return choice[:i], choice[i+1:]
+    return choice, None
+
+def is_conditional_bracket_content(first_choice: str) -> bool:
+    """
+    Determines if a raw bracket segment is a conditional (switch).
+    """
+    first_choice = first_choice.strip()
+    return bool(re.match(r"^switch\s*\((.*?)\)$", first_choice, re.DOTALL))
+
+def handle_conditional_branches(raw_choices: list[str], resolved_vars: dict, resolve_wildcards_func, kwargs: dict) -> str | None:
+    """
+    Checks if the raw choices represent a conditional branch (switch).
+    If they do, it parses, evaluates the condition, and returns the appropriate 
+    unresolved branch string for lazy evaluation. 
+    Returns None if it is not a conditional statement.
+    """
+    if not raw_choices:
+        return None
+        
+    first_choice = raw_choices[0].strip()
+
+    # --- SWITCH STATEMENT ---
+    m_switch = re.match(r"^switch\s*\((.*?)\)$", first_choice, re.DOTALL)
+    if m_switch:
+        switch_var = m_switch.group(1).strip()
+        
+        # evaluate dynamic variables in condition
+        switch_var = resolve_wildcards_func(
+            switch_var, **kwargs
+        ).strip()
+
+        var_values = []
+        if resolved_vars and switch_var in resolved_vars:
+            var_values = list(resolved_vars[switch_var].values())
+
+        default_res = ""
+        has_default = False
+
+        for choice in raw_choices[1:]:
+            case_val, res_val = _split_case_result(choice)
+            if res_val is not None:
+                case_val = case_val.strip()
+                
+                if case_val == "default":
+                    default_res = res_val
+                    has_default = True
+                elif case_val in var_values:
+                    return res_val
+                    
+        if has_default:
+            return default_res
+        return ""
+        
+    return None

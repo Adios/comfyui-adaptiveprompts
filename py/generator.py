@@ -15,6 +15,7 @@ import os
 import random
 import hashlib
 from .config import get_config
+from .wildcard_utils import handle_conditional_branches
 
 BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 
@@ -433,6 +434,21 @@ def sequence_prompt_elements(prompt: str, seed: int, mode: str, wildcard_dir: st
                     choices_str = inner[idx + 2:]
 
                 raw_choices = _split_top_level_pipes(choices_str)
+
+    # --- CONDITIONAL BRANCHING (LAZY EVALUATION) ---
+    # Pack kwargs for resolve_wildcards to evaluate dynamic conditions
+    rw_kwargs = {
+        "seeded_rng": seeded_rng,
+        "wildcard_dir": wildcard_dir,
+        "_depth": 0,
+        "_resolved_vars": _resolved_vars,
+        "bracket_ctx": bracket_ctx,
+        "bracket_overflow": bracket_overflow,
+    }
+
+    cond_result = handle_conditional_branches(raw_choices, _resolved_vars, resolve_wildcards, rw_kwargs)
+    if cond_result is not None:
+        return cond_result
                 options = [_extract_choice_weight(c)[0] for c in raw_choices]
 
                 if options:
@@ -669,6 +685,21 @@ def process_bracket(content: str,
     selection_mode = "roulette" if token == "??" else "deck"
 
     raw_choices = _split_top_level_pipes(choices_str)
+
+    # --- CONDITIONAL BRANCHING (LAZY EVALUATION) ---
+    # Pack kwargs for resolve_wildcards to evaluate dynamic conditions
+    rw_kwargs = {
+        "seeded_rng": seeded_rng,
+        "wildcard_dir": wildcard_dir,
+        "_depth": 0,
+        "_resolved_vars": _resolved_vars,
+        "bracket_ctx": bracket_ctx,
+        "bracket_overflow": bracket_overflow,
+    }
+
+    cond_result = handle_conditional_branches(raw_choices, _resolved_vars, resolve_wildcards, rw_kwargs)
+    if cond_result is not None:
+        return cond_result
 
     choice_keys = []
     weights = []
