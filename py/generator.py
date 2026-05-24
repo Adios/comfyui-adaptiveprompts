@@ -41,7 +41,6 @@ class SeededRandom:
         self.base_seed = base_seed
         self.seed = base_seed
         
-        # FIX: Resolve the config at instantiation, not definition
         if mode is None:
             self.mode = get_config("default_rng_mode")
         else:
@@ -51,7 +50,7 @@ class SeededRandom:
 
     def branch(self, identity: str) -> 'SeededRandom':
         """Creates a new isolated SeededRandom based on the identity."""
-        if self.mode == "Signature":
+        if self.mode == "Adaptive":
             count = self.occurrence_counts.get(identity, 0)
             self.occurrence_counts[identity] = count + 1
             
@@ -62,7 +61,7 @@ class SeededRandom:
             # Return a new RNG branch that shares the global occurrence tracker
             return SeededRandom(stable_seed, mode=self.mode, occurrence_counts=self.occurrence_counts)
         else:
-            # Classic mode: advance sequentially and branch
+            # Legacy mode: advance sequentially and branch. This is the way Dynamic Prompts originally behaved.
             self.seed += 1
             return SeededRandom(self.seed, mode=self.mode, occurrence_counts=self.occurrence_counts)
 

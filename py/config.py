@@ -4,9 +4,9 @@ import os
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.json"))
 
 DEFAULT_CONFIG = {
-    "resolution_strategy": "Global first",
     "search_depth_limit": 80,
-    "default_rng_mode": "Signature",
+    "default_rng_mode": "Adaptive",
+    "enable_bfs": True,
     "hide_comments": True
 }
 

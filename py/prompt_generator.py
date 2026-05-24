@@ -98,9 +98,9 @@ class PromptGeneratorAdvanced:
                 "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                 "hide_comments": ("BOOLEAN", {"default": True}),
                 "category": (labels, {"default": labels[0] if labels else "Default", "tooltip": tooltip}),
-                "rng_mode": (["Signature", "Classic"], {
-                    "default": "Signature", 
-                    "tooltip": "Signature: Isolated RNG for strict prompt stability.\nClassic: Sequential RNG (cascades changes)."
+                "rng_mode": (["Adaptive", "Legacy"], {
+                    "default": "Adaptive", 
+                    "tooltip": "Adaptive: Isolated RNG for strict prompt stability, allows re-arrangement.\Legacy: Sequential RNG which cascades changes (classic Dynamic Prompts)"
                 }),
             },
             "optional": {
