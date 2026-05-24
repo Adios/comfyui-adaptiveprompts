@@ -20,7 +20,16 @@ class AdaptiveConfig:
             try:
                 with open(CONFIG_PATH, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
-                    self.config.update(loaded)
+                
+                # Check if there are new defaults that the user's config.json doesn't have
+                missing_keys = set(DEFAULT_CONFIG.keys()) - set(loaded.keys())
+                
+                self.config.update(loaded)
+                
+                # Actively update the existing config file with the new default keys
+                if missing_keys:
+                    self.save()
+                    
             except Exception as e:
                 print(f"[Adaptive Prompts] Failed to load config: {e}")
         else:
