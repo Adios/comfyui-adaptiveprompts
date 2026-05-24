@@ -15,7 +15,7 @@ import os
 import random
 import hashlib
 from .config import get_config
-from .wildcard_utils import handle_conditional_branches
+from .wildcard_utils import handle_conditional_branches, is_conditional_bracket_content
 
 BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 
@@ -434,15 +434,22 @@ def sequence_prompt_elements(prompt: str, seed: int, mode: str, wildcard_dir: st
                     choices_str = inner[idx + 2:]
 
                 raw_choices = _split_top_level_pipes(choices_str)
+                
+                # Check for conditionals. If it's a conditional, do NOT sequence it.
+                is_conditional = False
+                if raw_choices:
+                    first_choice = raw_choices[0].strip()
+                    if is_conditional_bracket_content(first_choice):
+                        is_conditional = True
 
-                options = [_extract_choice_weight(c)[0] for c in raw_choices]
-
-                if options:
-                    elements.append({
-                        'start': start_idx, 'end': end_idx,
-                        'type': 'bracket', 'options': options,
-                        'var_name': var_name
-                    })
+                if not is_conditional:
+                    options = [_extract_choice_weight(c)[0] for c in raw_choices]
+                    if options:
+                        elements.append({
+                            'start': start_idx, 'end': end_idx,
+                            'type': 'bracket', 'options': options,
+                            'var_name': var_name
+                        })
                 i = end_idx - 1
         elif depth == 0 and prompt.startswith("__", i):
             m = FILE_PATTERN.match(prompt, i)
@@ -611,6 +618,7 @@ def process_bracket(content: str,
       - choices split with '|'
       - consider choice weights with %#.###
       - nested bracket/wildcard resolution for both choices and separators
+      - Conditionals: Evaluates {switch(var)|...} logic lazily.
     """
     count = 1
     exhaust_all = False
