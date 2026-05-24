@@ -15,7 +15,7 @@ import os
 import random
 import hashlib
 from .config import get_config
-from .wildcard_utils import handle_conditional_branches
+from .wildcard_utils import handle_conditional_branches, is_conditional_bracket_content
 
 BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 
@@ -434,29 +434,22 @@ def sequence_prompt_elements(prompt: str, seed: int, mode: str, wildcard_dir: st
                     choices_str = inner[idx + 2:]
 
                 raw_choices = _split_top_level_pipes(choices_str)
+                
+                # Check for conditionals. If it's a conditional, do NOT sequence it.
+                is_conditional = False
+                if raw_choices:
+                    first_choice = raw_choices[0].strip()
+                    if is_conditional_bracket_content(first_choice):
+                        is_conditional = True
 
-    # --- CONDITIONAL BRANCHING (LAZY EVALUATION) ---
-    # Pack kwargs for resolve_wildcards to evaluate dynamic conditions
-    rw_kwargs = {
-        "seeded_rng": seeded_rng,
-        "wildcard_dir": wildcard_dir,
-        "_depth": 0,
-        "_resolved_vars": _resolved_vars,
-        "bracket_ctx": bracket_ctx,
-        "bracket_overflow": bracket_overflow,
-    }
-
-    cond_result = handle_conditional_branches(raw_choices, _resolved_vars, resolve_wildcards, rw_kwargs)
-    if cond_result is not None:
-        return cond_result
-                options = [_extract_choice_weight(c)[0] for c in raw_choices]
-
-                if options:
-                    elements.append({
-                        'start': start_idx, 'end': end_idx,
-                        'type': 'bracket', 'options': options,
-                        'var_name': var_name
-                    })
+                if not is_conditional:
+                    options = [_extract_choice_weight(c)[0] for c in raw_choices]
+                    if options:
+                        elements.append({
+                            'start': start_idx, 'end': end_idx,
+                            'type': 'bracket', 'options': options,
+                            'var_name': var_name
+                        })
                 i = end_idx - 1
         elif depth == 0 and prompt.startswith("__", i):
             m = FILE_PATTERN.match(prompt, i)
@@ -617,7 +610,8 @@ def process_bracket(content: str,
                     wildcard_dir: str,
                     _resolved_vars=None,
                     bracket_ctx: dict | None = None,
-                    bracket_overflow: bool = True) -> str:
+                    bracket_overflow: bool = True,
+                    enable_conditionals: bool = True) -> str:
     """
     Handles bracket syntax:
       - Deck Mode (using $$ as the separator) utilizes NO-REPEAT until all possible options have been exhausted.
@@ -625,6 +619,10 @@ def process_bracket(content: str,
       - choices split with '|'
       - consider choice weights with %#.###
       - nested bracket/wildcard resolution for both choices and separators
+      - Conditionals: Evaluates {if(condition)|then|else} and {switch(var)|...} logic lazily if enable_conditionals is True.
+
+    Args:
+        enable_conditionals: If True (default), parses and evaluates conditional branch syntax.
     """
     count = 1
     exhaust_all = False
@@ -663,7 +661,8 @@ def process_bracket(content: str,
             wildcard_dir,
             _resolved_vars=_resolved_vars,
             bracket_ctx=bracket_ctx,
-            bracket_overflow=bracket_overflow
+            bracket_overflow=bracket_overflow,
+            enable_conditionals=enable_conditionals
         ).strip()
         
         if resolved_count == "*":
@@ -687,19 +686,21 @@ def process_bracket(content: str,
     raw_choices = _split_top_level_pipes(choices_str)
 
     # --- CONDITIONAL BRANCHING (LAZY EVALUATION) ---
-    # Pack kwargs for resolve_wildcards to evaluate dynamic conditions
-    rw_kwargs = {
-        "seeded_rng": seeded_rng,
-        "wildcard_dir": wildcard_dir,
-        "_depth": 0,
-        "_resolved_vars": _resolved_vars,
-        "bracket_ctx": bracket_ctx,
-        "bracket_overflow": bracket_overflow,
-    }
+    if enable_conditionals:
+        # Pack kwargs for resolve_wildcards to evaluate dynamic conditions
+        rw_kwargs = {
+            "seeded_rng": seeded_rng,
+            "wildcard_dir": wildcard_dir,
+            "_depth": 0,
+            "_resolved_vars": _resolved_vars,
+            "bracket_ctx": bracket_ctx,
+            "bracket_overflow": bracket_overflow,
+            "enable_conditionals": True
+        }
 
-    cond_result = handle_conditional_branches(raw_choices, _resolved_vars, resolve_wildcards, rw_kwargs)
-    if cond_result is not None:
-        return cond_result
+        cond_result = handle_conditional_branches(raw_choices, _resolved_vars, resolve_wildcards, rw_kwargs)
+        if cond_result is not None:
+            return cond_result
 
     choice_keys = []
     weights = []
@@ -935,7 +936,8 @@ def resolve_wildcards(text: str,
                       _depth=0,
                       _resolved_vars=None,
                       bracket_ctx: dict | None = None,
-                      bracket_overflow: bool = True) -> str:
+                      bracket_overflow: bool = True,
+                      enable_conditionals: bool = True) -> str:
     """
     Iterative resolver:
       - Runs passes until no further replacements occur (or max passes reached).
@@ -945,6 +947,9 @@ def resolve_wildcards(text: str,
         file wildcard draws avoid repeats within that bracket.
       - After the normal iterative passes, runs a final sweep attempting to resolve
         any remaining variable/wildcard tokens once more; removes ones that cannot be resolved.
+
+    Args:
+        enable_conditionals: If True (default), allows evaluation of if/switch statements.
     """
     search_depth_limit = get_config("search_depth_limit")
     if _depth > search_depth_limit:
@@ -997,7 +1002,13 @@ def resolve_wildcards(text: str,
 
                 if take_bracket:
                     content = working[br_start + 1: br_end]
-                    
+                    if not enable_conditionals and is_conditional_bracket_content(content):
+                        ph = next_placeholder()
+                        placeholders[ph] = "{" + content + "}"
+                        working = working[:br_start] + ph + working[br_end + 1:]
+                        changed = True
+                        continue
+
                     # --- NEW: Calculate Bracket Identity ---
                     separators = _find_top_level_separators(content)
                     if separators:
@@ -1024,7 +1035,8 @@ def resolve_wildcards(text: str,
                         wildcard_dir,
                         _resolved_vars=_resolved_vars,
                         bracket_ctx=bracket_ctx,
-                        bracket_overflow=bracket_overflow
+                        bracket_overflow=bracket_overflow,
+                        enable_conditionals=enable_conditionals
                     )
 
                     chain_assigned_values = []
@@ -1052,7 +1064,8 @@ def resolve_wildcards(text: str,
                                     content, local_rng, wildcard_dir,
                                     _resolved_vars=_resolved_vars,
                                     bracket_ctx=bracket_ctx,
-                                    bracket_overflow=bracket_overflow
+                                    bracket_overflow=bracket_overflow,
+                                    enable_conditionals=enable_conditionals
                                 )
                                 last_try = candidate
                                 if candidate not in prev_set:
@@ -1111,7 +1124,8 @@ def resolve_wildcards(text: str,
                                 generated, local_rng, wildcard_dir,
                                 _depth=_depth + 1, _resolved_vars=_resolved_vars,
                                 bracket_ctx=None,
-                                bracket_overflow=bracket_overflow
+                                bracket_overflow=bracket_overflow,
+                                enable_conditionals=enable_conditionals
                             )
                         else:
                             replacement = None
@@ -1140,7 +1154,8 @@ def resolve_wildcards(text: str,
                                     generated, local_rng, wildcard_dir,
                                     _depth=_depth + 1, _resolved_vars=_resolved_vars,
                                     bracket_ctx=bracket_ctx,
-                                    bracket_overflow=bracket_overflow
+                                    bracket_overflow=bracket_overflow,
+                                    enable_conditionals=enable_conditionals
                                 )
                                 _ensure_var_bucket(_resolved_vars, var_tok)
                                 # do not overwrite existing origin value if present
@@ -1159,7 +1174,8 @@ def resolve_wildcards(text: str,
                             generated, local_rng, wildcard_dir,
                             _depth=_depth + 1, _resolved_vars=_resolved_vars,
                             bracket_ctx=bracket_ctx,
-                            bracket_overflow=bracket_overflow
+                            bracket_overflow=bracket_overflow,
+                            enable_conditionals=enable_conditionals
                         )
 
                 if replacement is None:
@@ -1198,19 +1214,22 @@ def resolve_wildcards(text: str,
     text = text.replace(_ADJ_WC_MARKER, "")
     return text
 
-def evaluate_prompt_core(prompt: str, rng: SeededRandom, wildcard_dir: str, resolved_vars: dict, hide_comments: bool = True) -> str:
+def evaluate_prompt_core(prompt: str, rng: SeededRandom, wildcard_dir: str, resolved_vars: dict, hide_comments: bool = True, enable_conditionals: bool = True) -> str:
     """
     Evaluates comments blocks first, optionally removes them, then evaluates the main prompt string.
     This is the core execution logic shared by PromptGenerator and PromptStackLoader.
+    
+    Args:
+        enable_conditionals: If True (default), natively evaluates {if} and {switch} conditionals across all inheriting nodes.
     """
     if hide_comments is None:
         hide_comments = get_config("hide_comments")
     
     comment_blocks = re.findall(r"##(.*?)##", prompt, flags=re.DOTALL)
     for block in comment_blocks:
-        _ = resolve_wildcards(block, rng, wildcard_dir, _resolved_vars=resolved_vars)
+        _ = resolve_wildcards(block, rng, wildcard_dir, _resolved_vars=resolved_vars, enable_conditionals=enable_conditionals)
 
     if hide_comments:
         prompt = re.sub(r"##.*?##", "", prompt, flags=re.DOTALL)
 
-    return resolve_wildcards(prompt, rng, wildcard_dir, _resolved_vars=resolved_vars)
+    return resolve_wildcards(prompt, rng, wildcard_dir, _resolved_vars=resolved_vars, enable_conditionals=enable_conditionals)
