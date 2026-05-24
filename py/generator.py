@@ -428,6 +428,11 @@ def sequence_prompt_elements(prompt: str, seed: int, mode: str, wildcard_dir: st
                         end_idx += 1 + len(var_name)
 
                 inner = prompt[start_idx+1:i]
+                
+                if PluginRegistry.is_bypassed(inner):
+                    i = end_idx - 1
+                    continue
+
                 separators = _find_top_level_separators(inner)
                 choices_str = inner
                 if separators:

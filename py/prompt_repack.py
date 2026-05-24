@@ -3,6 +3,7 @@ import re
 from typing import Dict, List, Tuple, Optional
 from .generator import SeededRandom, evaluate_prompt_core
 from .wildcard_utils import build_category_options, _default_package_root, _normalize_input_context, _ensure_bucket_dict
+from .plugin_registry import PluginRegistry
 
 class WildcardPreprocessor:
     """
@@ -314,6 +315,17 @@ class PromptRepack:
                     i += 1
                     continue
                 inner = text[i + 1:j]
+                
+                if PluginRegistry.is_bypassed(inner):
+                    bypassed_text = "{" + inner + "}"
+                    for seg in segments:
+                        if seg and isinstance(seg[-1], str) and not seg[-1].startswith('{'):
+                            seg[-1] = seg[-1] + bypassed_text
+                        else:
+                            seg.append(bypassed_text)
+                    i = j + 1
+                    continue
+
                 choices = [c.strip() for c in inner.split('|') if c.strip() != '']
                 # cartesian product update
                 new_segments: List[List[str]] = []
