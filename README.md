@@ -3,6 +3,7 @@
 
 <img src="images/adaptive_prompts_logo.png">
 
+> - **14/01/26** v0.0.4 released: fixes a major bracket bug
 > - **13/01/26** Happy New Year! v0.0.3 released! Added a new bracket selection mode. see releases page for change-log.
 > - **16/09/25** Prompt Sequencer added: Generates every possible combination of wildcards sequentially.
 > - **15/09/25** Prompt Generator (Advanced) added: Allows specifying a /wildcards/ folder (if the folder starts with "wildcard").
@@ -591,7 +592,10 @@ Then I run this through the prompt generator:
 This allows for wildcards and prompts to handle loras for you.
 Consider combining this with the Lora Tag Normalizer.
 
+# Extensions
 
+  ### [Prompt Stack Loader](https://github.com/Adios/comfyui-adaptiveprompts-extensions) by Adios
+  Serves as a companion to Adaptive Prompts, providing additional specialized nodes and experimental features, including a PromptStackLoader, a powerful profile-based system allowing you to create prompts with templates, and much more.
 
 # Links
 
