@@ -4,9 +4,8 @@ import os
 CONFIG_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "config.json"))
 
 DEFAULT_CONFIG = {
-    "search_depth_limit": 80,
     "default_rng_mode": "Adaptive",
-    "enable_bfs": True,
+    "search_depth_limit": 80,
     "hide_comments": True
 }
 

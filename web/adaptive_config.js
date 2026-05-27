@@ -27,6 +27,16 @@ app.registerExtension({
     // THE DECLARATIVE ARRAY: ComfyUI reads this instantly. No async waiting!
     settings: [
         {
+            id: SETTING_RNG,
+            name: "Default RNG Mode",
+            type: "combo",
+            options: ["Adaptive", "Legacy"],
+            tooltip: "Adaptive: Identity-based RNG (rearrangeable prompts). Legacy: Sequential RNG (domino-effect).",
+            defaultValue: "Adaptive",
+            category: ["Adaptive Prompts", "Generation", "RNG Mode"],
+            onChange: (value) => syncToBackend("default_rng_mode", value)
+        },
+        {
             id: SETTING_DEPTH,
             name: "Search Depth Limit",
             type: "slider",
@@ -35,25 +45,6 @@ app.registerExtension({
             // Categories create nested folders in the Settings UI
             category: ["Adaptive Prompts", "Resolution", "Search Depth"],
             onChange: (value) => syncToBackend("search_depth_limit", value)
-        },
-        {
-            id: SETTING_BFS,
-            name: "Use Breadth-First Search",
-            type: "boolean",
-            tooltip: "If a wildcard cannot be resolved locally or absolutely, BFS will attempt to find it.\nWARNING: Disabling this may cause some wildcard packs to not work as intended.",
-            defaultValue: true,
-            category: ["Adaptive Prompts", "Resolution", "BFS Fallback"],
-            onChange: (value) => syncToBackend("enable_bfs", value)
-        },
-        {
-            id: SETTING_RNG,
-            name: "Default RNG Mode",
-            type: "combo",
-            options: ["Adaptive", "Legacy"],
-            tooltip: "Adaptive: Isolated deterministic RNG. Legacy: Sequential domino-effect RNG.",
-            defaultValue: "Adaptive",
-            category: ["Adaptive Prompts", "Generation", "RNG Mode"],
-            onChange: (value) => syncToBackend("default_rng_mode", value)
         },
         {
             id: SETTING_COMMENTS,
@@ -66,9 +57,8 @@ app.registerExtension({
     ],
 
     async setup() {
-        syncToBackend("search_depth_limit", app.ui.settings.getSettingValue(SETTING_DEPTH, 80));
-        syncToBackend("enable_bfs", app.ui.settings.getSettingValue(SETTING_BFS, true));
         syncToBackend("default_rng_mode", app.ui.settings.getSettingValue(SETTING_RNG, "Signature"));
+        syncToBackend("search_depth_limit", app.ui.settings.getSettingValue(SETTING_DEPTH, 80));
         syncToBackend("hide_comments", app.ui.settings.getSettingValue(SETTING_COMMENTS, true));
     }
 });
