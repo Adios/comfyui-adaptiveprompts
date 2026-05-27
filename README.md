@@ -175,9 +175,11 @@ Yes, the possibilities are endless. And these are just the basics of what can be
 
 ## 💡 Prompt Generator
 
->9/16/2025 UPDATED: Advanced version now included. Allows for specifying a category /wildcards/ folder, which falls back to default if a ```__wildcard__``` cannot be resolved. [AdaptivePromptsExamples.json](workflow/AdaptivePromptsExamples.json) workflow file now included showing examples.
+>**27/5/2026:** RNG Modes added!
 
->9/12/2025 UPDATED: Added context input and output. This allows for chaining prompt generators to preserve variable context. See [variables](#⚡variables) below.
+>**16/9/2025:** Advanced version now included. Allows for specifying finger details, such as RNG Mode, or a category /wildcards/ folder, which falls back to default if a ```__wildcard__``` cannot be resolved. [AdaptivePromptsExamples.json](workflow/AdaptivePromptsExamples.json) workflow file now included showing examples.
+
+>12/9/2025: Added context input and output. This allows for chaining prompt generators to preserve variable context. See [variables](#⚡variables) below.
 
 >Reminder: wildcards must be placed at: ```comfyui-adaptiveprompts/wildcards/```
 
@@ -186,6 +188,17 @@ Yes, the possibilities are endless. And these are just the basics of what can be
 Formerly known as **Random Prompts**. **Prompt Generator** is the essential node of adaptive prompts.
 
 It works mostly like you remember, but there are a few twists...
+
+### RNG Modes (NEW)
+
+As of 27/05/2026, you may now select an RNG Mode either within the configuration (implicit) or in the `Prompt Generator Advanced` node (explicit). **Adaptive** is the new default.
+
+**Legacy:** The traditional way of generating prompts. Re-arranging prompts will completely change the result of each wildcard.
+
+**Adaptive:** Prompts are generated based on their signature. For example `__color__ __fruit__` can be re-arranged to preserve the resulting prompt.
+
+<img src="images/rng_modes_example.png">
+
 
 ### Wildcards Refresh Instantly
 
