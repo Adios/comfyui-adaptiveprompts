@@ -5,10 +5,18 @@
 
 
 # News
-> - **14/01/26** v0.1.0 released: New RNG mode (with legacy support), Prompt Repack upgrade, and more!
-> - **14/01/26** v0.0.4 released: fixes a major bracket bug
+> - **27/05/26** *v0.1.0 released:* Powerful New RNG mode: Adaptive (with Legacy support), Prompt Repack upgrade, and more! See newest release for more details.
+> - **14/01/26** *v0.0.4 released:* fixed a major bracket bug
 
-[See More](#New-History)
+[See More](#Update-History)
+
+## Planned Features
+
+Please see the Issues tab to request or support new features. *High demand = High priority*
+
+> - BFS support (High Priority)
+> - Switches / Conditionals
+> - YAML support
 
 ## Introduction
 
