@@ -14,9 +14,10 @@
 
 Please see the Issues tab to request or support new features. *High demand = High priority*
 
-> - BFS support (High Priority)
-> - Switches / Conditionals
-> - YAML support
+> - **Wildcard Implicit/Explicit Calls & BFS support** (High Priority)
+> - **Prompt Context Loading** to effectively load "profiles" for variable prompts
+> - **Switches / Conditionals**
+> - **YAML Wildcards** allowing for legacy support of existing wildcard formats
 
 ## Introduction
 
@@ -35,7 +36,7 @@ In these descriptions, a "phrase" can be defined as the space between two commas
 | Node | Description | Note |
 |------|---------|-------|
 | 💡 Prompt Generator | Creates dynamic prompts based on your input. Use {brackets} or \_\_wildcards\_\_ | Originally "Random Prompts" |
-| 💡 Prompt Generator (Advanced) | Includes option to Hide Comments and specify Wildcard Category folder | Provides finer control |
+| 💡 Prompt Generator (Advanced) | Includes config override settings, such as RNG Mode, or specify Wildcard Category folder | Provides finer control |
 | 🎞️ Prompt Sequencer | Cycles through every possible combination of {brackets} or \_\_wildcards\_\_, sequential and deterministic | Perfect for iterating through long lists|
 | 📦 Prompt Repack | A powerful inverse of Prompt Generator. It converts natural words, tags, or phrases back into wildcards. | Now supports immediate Prompt Generation output |
 | 🔁 Prompt Replace | Search & Replace, but on steroids. Both inputs support dynamic prompts, then apply procedurally. | |
@@ -525,6 +526,16 @@ A simple prompt swiss-army knife. Sometimes, dynamic prompts get messy. This lit
 
 
 
+# ⚙ Configuration
+
+
+A menu for Adaptive Prompts can can be found within ComfyUI's Settings.
+
+
+<img src="images/adaptive_prompts_configuration.png">
+
+
+Default settings are applied to nodes that support prompt generation, such as `Prompt Generator`. For explicit control to override these settings, use `Prompt Generator (Advanced)`.
 
 # 💡 Tricks & Tips
 
