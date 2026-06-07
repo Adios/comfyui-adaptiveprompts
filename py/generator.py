@@ -15,6 +15,7 @@ import os
 import random
 import hashlib
 from .config import get_config
+from .wildcard_utils import handle_conditional_branches, is_conditional_bracket_content
 
 BRACKET_PATTERN = re.compile(r"\{([^{}]+)\}")
 
@@ -138,11 +139,11 @@ def _find_top_level_separators(s: str) -> list[tuple[int, str]]:
     while i < L:
         c = s[i]
 
-        if c == "{":
+        if c in "{[<(":
             depth += 1
             i += 1
             continue
-        if c == "}":
+        elif c in "}])>":
             if depth > 0:
                 depth -= 1
             i += 1
@@ -164,9 +165,15 @@ def _find_top_level_separators(s: str) -> list[tuple[int, str]]:
 
 def _split_top_level_pipes(s: str) -> list[str]:
     """
-    Split string on '|' tokens that are at top level (not inside nested {...}).
+    Split string on '|' tokens that are at top level (not inside nested structures).
     IMPORTANT: do NOT trim returned segments — return exactly as found so leading/trailing
     spaces/newlines of each choice are preserved for correct spacing.
+    
+    Key modifications for hybrid conditional syntax:
+    - The depth tracker explicitly checks `{[<(`. 
+    - Blindly tracking all brackets ensures that pipe operators `|` inside inline assignments 
+      (e.g., `<gametype={nintendo|video}>`) or condition checks do not prematurely trigger 
+      a top-level split.
     """
     parts = []
     buf = []
@@ -175,10 +182,10 @@ def _split_top_level_pipes(s: str) -> list[str]:
     L = len(s)
     while i < L:
         c = s[i]
-        if c == "{":
+        if c in "{[<(":
             depth += 1
             buf.append(c)
-        elif c == "}":
+        elif c in "}])>":
             if depth > 0:
                 depth -= 1
             buf.append(c)
@@ -432,14 +439,22 @@ def sequence_prompt_elements(prompt: str, seed: int, mode: str, wildcard_dir: st
                     choices_str = inner[idx + 2:]
 
                 raw_choices = _split_top_level_pipes(choices_str)
-                options = [_extract_choice_weight(c)[0] for c in raw_choices]
+                
+                # Check for conditionals. If it's a conditional, do NOT sequence it.
+                is_conditional = False
+                if raw_choices:
+                    first_choice = raw_choices[0].strip()
+                    if is_conditional_bracket_content(first_choice):
+                        is_conditional = True
 
-                if options:
-                    elements.append({
-                        'start': start_idx, 'end': end_idx,
-                        'type': 'bracket', 'options': options,
-                        'var_name': var_name
-                    })
+                if not is_conditional:
+                    options = [_extract_choice_weight(c)[0] for c in raw_choices]
+                    if options:
+                        elements.append({
+                            'start': start_idx, 'end': end_idx,
+                            'type': 'bracket', 'options': options,
+                            'var_name': var_name
+                        })
                 i = end_idx - 1
         elif depth == 0 and prompt.startswith("__", i):
             m = FILE_PATTERN.match(prompt, i)
@@ -554,20 +569,29 @@ def _collect_candidates(_resolved_vars: dict,
 def find_next_bracket_span(text: str):
     """
     Parse all bracket spans with a stack and decide which span should be processed next.
-    Preference logic:
-      - If any span has top-level $$ markers and contains nested spans inside its separator region,
-        prefer that span (this prevents nested separators from being pre-resolved).
-      - Otherwise, return the innermost span (max depth), earliest by start.
-    Returns tuple (start_index, end_index) or None.
+    
+    Key modifications for hybrid conditional syntax:
+    - We intentionally track all `<` and `>` pairs unconditionally (even for `<lora:...>`).
+      This guarantees perfectly balanced stack extraction. If a user nests an assignment 
+      inside a Lora (e.g., `<myvar=<lora:name:1>>`), skipping the Lora tag would cause 
+      premature stack popping and mangle the assignment.
+    - Unrelated tags (like Loras) are safely bypassed later by `_process_angle_bracket`.
     """
     stack = []
     spans = []
     for i, ch in enumerate(text):
         if ch == "{":
-            stack.append(i)
+            stack.append((i, "{"))
+        elif ch == "<":
+            stack.append((i, "<"))
         elif ch == "}":
-            if stack:
-                s = stack.pop()
+            if stack and stack[-1][1] == "{":
+                s, _ = stack.pop()
+                depth = len(stack) + 1
+                spans.append((s, i, depth))
+        elif ch == ">":
+            if stack and stack[-1][1] == "<":
+                s, _ = stack.pop()
                 depth = len(stack) + 1
                 spans.append((s, i, depth))
     if not spans:
@@ -600,7 +624,8 @@ def process_bracket(content: str,
                     wildcard_dir: str,
                     _resolved_vars=None,
                     bracket_ctx: dict | None = None,
-                    bracket_overflow: bool = True) -> str:
+                    bracket_overflow: bool = True,
+                    unres_map: dict | None = None) -> str:
     """
     Handles bracket syntax:
       - Deck Mode (using $$ as the separator) utilizes NO-REPEAT until all possible options have been exhausted.
@@ -608,6 +633,7 @@ def process_bracket(content: str,
       - choices split with '|'
       - consider choice weights with %#.###
       - nested bracket/wildcard resolution for both choices and separators
+      - Conditionals: Evaluates {switch(var)|...} logic lazily.
     """
     count = 1
     exhaust_all = False
@@ -668,6 +694,22 @@ def process_bracket(content: str,
     selection_mode = "roulette" if token == "??" else "deck"
 
     raw_choices = _split_top_level_pipes(choices_str)
+
+    # --- CONDITIONAL BRANCHING (LAZY EVALUATION) ---
+    # Pack kwargs for resolve_wildcards to evaluate dynamic conditions
+    rw_kwargs = {
+        "seeded_rng": seeded_rng,
+        "wildcard_dir": wildcard_dir,
+        "_depth": 0,
+        "_resolved_vars": _resolved_vars,
+        "bracket_ctx": bracket_ctx,
+        "bracket_overflow": bracket_overflow,
+        "unres_map": unres_map or {},
+    }
+
+    cond_result = handle_conditional_branches(raw_choices, _resolved_vars, resolve_wildcards, rw_kwargs)
+    if cond_result is not None:
+        return cond_result
 
     choice_keys = []
     weights = []
@@ -896,6 +938,49 @@ def _final_sweep_resolve(text: str,
         i = m.start() + len(replacement)
 
     return text
+def _process_angle_bracket(content: str, _resolved_vars: dict) -> str | None:
+    """
+    Evaluates inline angle-bracket macros (e.g., `<var=value>` assignments and `<flag??fallback>`).
+    
+    This is extracted from the core parsing loop to maintain single-responsibility.
+    Returns the replacement string if it matches a known macro, modifying `_resolved_vars` 
+    in-place if necessary. 
+    
+    Returns `None` if it doesn't match any syntax, signaling the caller to protect 
+    it with a placeholder (e.g., standard SD `<lora:name>` or `<embedding:name>` tags).
+    """
+    if "??" in content:
+        flag, fallback = content.split("??", 1)
+        flag = flag.strip()
+        # Check if flag exists
+        if _resolved_vars and flag in _resolved_vars:
+            return fallback
+        else:
+            return ""
+            
+    elif "=" in content:
+        var_part, val_part = content.split("=", 1)
+        var_name = var_part.strip()
+        
+        # Lazily store the assignment content in the resolved variables context.
+        # It will be naturally evaluated by the core loop when called upon later.
+        _ensure_var_bucket(_resolved_vars, var_name)
+        bucket = _resolved_vars[var_name]
+        origin_key = f"__bracket_{len(bucket)}"
+        bucket[origin_key] = val_part
+        return ""
+
+    elif _VARNAME_RE.fullmatch(content.strip()):
+        # It's a pure flag <flag>
+        var_name = content.strip()
+        _ensure_var_bucket(_resolved_vars, var_name)
+        bucket = _resolved_vars[var_name]
+        origin_key = f"__bracket_{len(bucket)}"
+        bucket[origin_key] = ""
+        return ""
+        
+    return None
+
 
 def resolve_wildcards(text: str,
                       seeded_rng: SeededRandom,
@@ -933,7 +1018,7 @@ def resolve_wildcards(text: str,
 
     def next_placeholder():
         nonlocal placeholder_counter
-        ph = f"<<UNRES_{placeholder_counter}>>"
+        ph = f"@@UNRES_{placeholder_counter}@@"
         placeholder_counter += 1
         return ph
 
@@ -966,6 +1051,22 @@ def resolve_wildcards(text: str,
                 if take_bracket:
                     content = working[br_start + 1: br_end]
                     
+                    # --- ANGLE BRACKET MACROS ---
+                    if working[br_start] == '<':
+                        repl = _process_angle_bracket(content, _resolved_vars)
+                        if repl is not None:
+                            # It was a valid assignment or fallback. Replace and space adjacent wildcards.
+                            working = working[:br_start] + repl + working[br_end + 1:]
+                            changed = True
+                            working = _space_adjacent_wildcards(working)
+                            continue
+                        else:
+                            # Not a recognized macro (e.g., standard Lora). Protect it using placeholders.
+                            ph = next_placeholder()
+                            placeholders[ph] = working[br_start:br_end+1]
+                            working = working[:br_start] + ph + working[br_end + 1:]
+                            continue
+
                     # --- NEW: Calculate Bracket Identity ---
                     separators = _find_top_level_separators(content)
                     if separators:
@@ -992,7 +1093,8 @@ def resolve_wildcards(text: str,
                         wildcard_dir,
                         _resolved_vars=_resolved_vars,
                         bracket_ctx=bracket_ctx,
-                        bracket_overflow=bracket_overflow
+                        bracket_overflow=bracket_overflow,
+                        unres_map=placeholders
                     )
 
                     chain_assigned_values = []

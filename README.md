@@ -351,12 +351,121 @@ __^char3__ = calvin
 Great for randomized story/scenario prompts.
 ```
 
-> **Important:** When assigning variables, I strongly recommend placing them in a ```## comment space like this ##```. This is because the Prompt Generator seeks out comment lines and executes the brackets/wildcards in there first. If you don't do this, things might work, but depending on the complexity of your prompt, you variable retrievals might yield null.
+> **Important:** When assigning variables via the `^` syntax above, it is recommended to place them in a `## comment space like this ##` so they don't leak into the prompt text.
+
+### ⚡ Inline Variable Assignments (NEW)
+You can now use a cleaner, inline `<>` syntax to seamlessly assign variables without needing clunky `##` comment blocks!
+```text
+A beautiful <color=blue> __^color__ car.
+```
+This syntax evaluates silently (vanishing from the output) while properly registering the variable for the entire prompt instance.
+
+### 🚩 Flags & Conditional Injection (NEW)
+You can declare a variable purely as a "flag" by omitting the equals sign: `<myflag>`. 
+Then, use the conditional `??` syntax to magically inject text *only if* that flag is currently active:
+```text
+I want to eat {apples<fruit>|carrots<vegetable>}, <fruit??they keep the doctors away><vegetable??they're crunchy!>
+```
+If "apples" is chosen, the `<fruit>` flag is set, and the prompt will output: `I want to eat apples, they keep the doctors away`.
 
 Using all of these tricks, you can achieve some pretty powerful results!
 
 
 <img src="images/prompt_generator_variables_example.png"/>
+
+## 🔀 Conditional Branching & Logic
+You can program dynamic logic directly into your prompts using the `{switch(var)}` and `{if(var)}` statements! This allows you to resolve prompt conflicts (e.g., ensuring "shoes" don't appear in a "close-up" shot) or link aesthetic details securely without duplicating massive chunks of text.
+
+> [!NOTE]
+> **Supported Nodes:** Conditionals are evaluated during the core generation phase. You can freely write `switch` or `if` statements inside the text boxes of:
+> - **Prompt Generator**
+> - **Prompt Generator (Advanced)**
+> - **Prompt Sequencer**
+> - **Prompt Repack**
+> - **Prompt Replace**
+> - **Prompt Mixer**
+> 
+> **Unsupported Nodes:** Post-processing nodes such as `Prompt Alias Swap`, `Prompt Shuffle`, `Prompt Splitter`, `Prompt Cleanup`, and `Weight Lifter` **do not** evaluate conditionals internally. 
+
+### The Switch Statement
+For branching based on a variable, use `{switch(var) | case: result | default: result}`. It checks the variable's value and outputs the matching `case`.
+
+```text
+{switch(view)
+  | close-up: (detailed face:1.2), portrait
+  | full-body: standing, shoes, full shot
+  | cowboy: cowboy shot, belt
+  | default: 
+      # The default branch executes if no cases match
+      {some|other|wildcard}
+}
+```
+
+#### Switch Fallthrough (Shortcuts)
+If you want multiple cases to share the exact same result, you can use "fallthrough" logic. If a case label does not have a colon (`:`), it will automatically fall through and use the result of the very next case that provides one!
+
+```text
+{switch(class)
+  | warrior
+  | paladin: heavy steel plate armor, battle scars
+  | mage
+  | warlock: flowing robes, glowing spellbook
+}
+```
+In this example:
+- If `class` is `warrior` OR `paladin`, it outputs `heavy steel plate armor, battle scars`.
+- If `class` is `mage` OR `warlock`, it outputs `flowing robes, glowing spellbook`.
+
+> [!WARNING]
+> **Switch Case Delimiters (Colons):** `switch` syntax relies on `:` as a delimiter (`| case: result`). If you want to use a literal colon *inside* your case label, wrap it in brackets to protect it. Colons inside `()`, `{}`, `[]`, and `<>` (like `<lora:name:1.0>`) will parse perfectly without breaking the statement!
+
+### The IF Statement
+For standard boolean checks or simple OR-matching, use the `{if(var==value) | true_result | default: false_result}` syntax. It supports multiple allowed values separated by a pipe `|`:
+
+```text
+{if(color==red|green|blue)
+  | This is a primary or secondary color!
+  | default: This is some other color.
+}
+```
+
+#### Pure Flag Checks
+If your variable is acting as a "pure flag" (assigned via `<fruit>`), you can just check its existence directly without the `==`:
+```text
+{if(fruit) 
+  | We are eating healthy today! 
+  | default: No fruit for us.
+}
+```
+*Note: A pure flag secretly assigns an empty string. `{if(fruit)}` specifically checks if that flag was assigned during the current prompt generation!*
+
+#### Checking for Empty Placeholders
+Sometimes you declare a placeholder variable (e.g., `<myvar= >`) and want to replace it with a specific default value *only if* it has nothing inside it.
+
+You can use the `{if(empty(var))}` function to securely check if a variable is entirely empty (even if it's filled with spaces or newlines), or completely undefined!
+
+```text
+{if(empty(color)) 
+  | I replaced the empty placeholder!
+  | default: __^color__
+}
+```
+
+*(Alternatively, you can just use the exact same logic with the equals operator: `{if(color==)}`! This implicitly checks if the variable matches an empty string!)*
+
+#### Checking for Assigned Values (Not Empty)
+If you want the exact opposite—to check if a variable both *exists* AND *has a non-empty value*—you can use the `!=` (Not Equal) operator without providing a value:
+```text
+{if(color!=) 
+  | We have a specific color: __^color__
+  | default: No specific color assigned!
+}
+```
+In this example, if you just wrote `<color>` or `<color=  >`, the check would **fail** because the value is essentially an empty string. If you wrote `<color=red>`, it would **pass**!
+
+*(You can also use `!=` normally to check against specific values, e.g., `{if(color!=red|blue)}`!)*
+
+
 
 ## 🎞️ Prompt Sequencer
 
